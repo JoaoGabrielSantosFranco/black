@@ -15,34 +15,7 @@ Saída: N cortes de 30-90s, legendados, publicados no canal configurado.
 **Sucesso:** rodar agendada, produzir cortes aproveitáveis sem edição manual, e
 nunca publicar nada sem o operador aprovar.
 
-## 2. Restrição fundamental — autorização da fonte
-
-Todo material processado pertence a terceiros. O sistema **só processa fontes
-com autorização registrada**. Isto não é uma recomendação no README: é uma
-trava no código.
-
-Cada fonte (canal de podcast) tem um registro obrigatório:
-
-```yaml
-# fontes/nome_do_podcast.yaml
-canal_origem: "https://youtube.com/@exemplo"
-autorizacao:
-  tipo: publica            # publica | email | contrato
-  evidencia: "https://youtube.com/@exemplo/about"
-  captura: provas/exemplo-2026-08-25.png
-  verificado_em: 2026-08-25
-  observacao: "Descrição do canal autoriza cortes com crédito e link."
-credito_obrigatorio: true
-```
-
-O pipeline recusa (`ERRO_SEM_AUTORIZACAO`) qualquer job cuja fonte não tenha
-registro válido. Se `credito_obrigatorio`, a descrição do vídeo recebe crédito e
-link do episódio original automaticamente — sem isso o upload não acontece.
-
-**Fora de escopo:** avaliar se uma autorização é juridicamente suficiente. O
-sistema registra e aplica o que o operador declarou.
-
-## 3. Arquitetura
+## 2. Arquitetura
 
 Processo Python único. Estado em SQLite. O núcleo é uma **CLI pura** — não sabe
 quem a chamou.
@@ -95,15 +68,14 @@ Cada transição é uma função `(entidade, workdir) -> novo_estado`, idempoten
 retomável. Queda de energia no meio do render: o job retoma de `SEGMENTADO`, e
 os cortes já renderizados não são refeitos.
 
-## 4. Componentes
+## 3. Componentes
 
 ```
-main.py                 CLI: ingest, run, schedule, bot, fontes, canais
+main.py                 CLI: ingest, run, schedule, bot, canais
                         (a CLI segue completa; o bot é outro cliente dela)
 vidbot/
-  db.py                 SQLite: jobs, cortes, fontes, canais, uploads
+  db.py                 SQLite: jobs, cortes, canais, uploads
   config.py             .env + validação de credenciais
-  fontes.py             Carrega e valida registros de autorização
   perfis.py             YAML por canal de destino
   pipeline.py           Máquina de estados. Conhece a ordem, não o "como"
   llm.py                Gemini / Groq / Ollama com fallback
@@ -117,14 +89,13 @@ vidbot/
   youtube.py            Upload multi-canal, um token OAuth por canal
   scheduler.py          Cadências → jobs
   bot.py                Telegram: entrada por link, status e aprovação
-fontes/                 Registros de autorização (§2)
 perfis/                 Canais de destino
 tokens/                 OAuth por canal (gitignored)
 ```
 
 Nada disso existe ainda: o repositório contém apenas este documento.
 
-## 4.1 Aquisição em duas fases (`download.py`)
+## 3.1 Aquisição em duas fases (`download.py`)
 
 **Não há transcrição própria.** O YouTube já publica as faixas de legenda de
 cada vídeo, e elas bastam. Vídeo sem legenda não vira corte.
@@ -175,7 +146,7 @@ legenda indicou; sem isso o vídeo começa no keyframe anterior, até 5s antes.
 ### Decisões
 
 - yt-dlp entra como **biblioteca Python**, não subprocess — os `progress_hooks`
-  alimentam o progresso no Telegram (§9) sem parsing de texto
+  alimentam o progresso no Telegram (§8) sem parsing de texto
 - Formato preferido **H.264 ≤1080p + m4a**. VP9/AV1 economizam banda mas custam
   muito mais CPU no encode, e CPU é o gargalo da máquina alvo
 - Formato sem suporte a range → **fallback para download completo**
@@ -188,9 +159,7 @@ se o acesso às legendas quebrar, a fábrica para. É uma troca deliberada de
 robustez por simplicidade e velocidade. `vidbot doctor` confere a versão do
 yt-dlp e avisa quando estiver defasada, que é a mitigação disponível.
 
-A aquisição só ocorre para fontes com autorização registrada (§2).
-
-## 5. Seleção de trechos (`segment.py`)
+## 4. Seleção de trechos (`segment.py`)
 
 O passo que define a qualidade do produto.
 
@@ -219,7 +188,7 @@ começo e fim naturais. Devolve, para cada candidato:
 **Regra de conteúdo:** o corte preserva o trecho como foi dito, sem recontextualizar
 de forma enganosa. Título e descrição refletem o que o trecho de fato diz.
 
-## 6. Reenquadramento (`reframe.py`)
+## 5. Reenquadramento (`reframe.py`)
 
 Três estratégias, escolhidas no perfil:
 
@@ -233,20 +202,20 @@ Três estratégias, escolhidas no perfil:
 segundos e suavizam o movimento para evitar tremor. Falha na detecção cai
 silenciosamente para `centro` — degradar é melhor que falhar.
 
-## 7. Legendas (`subtitles.py`)
+## 6. Legendas (`subtitles.py`)
 
 Gera arquivo `.ass`, queimado pelo ffmpeg. Estilo vem do perfil do canal e é
 validado com clamp e whitelist antes de virar arquivo (o LLM nunca escreve ASS
 diretamente).
 
 Modo padrão: karaokê, 1-3 palavras por vez, palavra ativa destacada —
-sincronizado pelos tempos por palavra do ASR do YouTube (§4.1). Havendo apenas
+sincronizado pelos tempos por palavra do ASR do YouTube (§3.1). Havendo apenas
 legenda do autor, o destaque passa a ser por linha.
 
 Parâmetros: fonte, tamanho, cor primária, cor de destaque, contorno, posição,
 caixa de fundo, maiúsculas, palavras por cue.
 
-## 8. Publicação (`youtube.py`)
+## 7. Publicação (`youtube.py`)
 
 Um arquivo de token OAuth por canal de destino. O perfil aponta qual usar.
 
@@ -256,11 +225,11 @@ em `APROVADO` e o scheduler os drena no dia seguinte, na ordem em que foram
 aprovados — aprovação nunca se perde por falta de quota.
 
 Descrição montada automaticamente: texto do perfil + crédito e link do episódio
-original quando `credito_obrigatorio`.
+original quando o perfil ativa `creditar_origem`.
 
 Privacidade padrão: `unlisted`. Publicar como `public` é opção explícita do perfil.
 
-## 9. Interface Telegram (`bot.py`)
+## 8. Interface Telegram (`bot.py`)
 
 O Telegram é a interface completa da fábrica: **dispara, acompanha e aprova**.
 O operador não precisa de terminal.
@@ -270,16 +239,13 @@ O operador não precisa de terminal.
 O operador manda um link do YouTube ao bot. O bot:
 
 1. Extrai o ID do vídeo e consulta os metadados (canal de origem, duração, título)
-2. **Verifica a autorização** da fonte (§2). Sem registro, recusa e oferece
-   registrar ali mesmo, guiando pelos campos obrigatórios
-3. Pergunta o canal de destino, se houver mais de um perfil
-4. Cria o job em `NOVO` e devolve o número
+2. Pergunta o canal de destino, se houver mais de um perfil
+3. Cria o job em `NOVO` e devolve o número
 
 ```
 Operador: https://youtube.com/watch?v=XXXX
 
 Bot: 🎙 "Episódio 148 — título" · @exemplo · 1h52
-     ✅ Fonte autorizada (pública, verificada em 2026-08-25)
      Publicar em qual canal?
      [cortes_br]  [cortes_en]
 
@@ -351,17 +317,15 @@ Nada sobe sem toque humano. Publicado, o bot responde com o link do YouTube.
 - Só responde aos IDs em `TELEGRAM_ALLOWED_USER_IDS`
 - Cortes acima de 50MB (limite de envio da Bot API) vão como caminho de arquivo
   local em vez de anexo
-- Comandos auxiliares: `/jobs` (em andamento), `/fontes` (autorizações),
-  `/cancelar <id>`
+- Comandos auxiliares: `/jobs` (em andamento), `/cancelar <id>`
 - O bot **enfileira**; não processa dentro do handler. Handler que renderiza
   vídeo trava o bot inteiro
 - **Fora de escopo:** servidor Bot API local para arquivos até 2GB
 
-## 10. Tratamento de erro
+## 9. Tratamento de erro
 
 | Falha | Resposta |
 |---|---|
-| Fonte sem autorização | `ERRO_SEM_AUTORIZACAO`, para antes de baixar |
 | Link inválido ou não suportado | Bot recusa na entrada, sem criar job |
 | Arquivo enviado > 20MB | Bot explica o limite e pede o link |
 | yt-dlp falha / vídeo privado | 3 tentativas com backoff, depois avisa no Telegram |
@@ -377,17 +341,16 @@ Nada sobe sem toque humano. Publicado, o bot responde com o link do YouTube.
 Princípio: **falha de um corte nunca derruba o episódio**. Erros são registrados
 no banco com mensagem, não apenas logados.
 
-## 11. Testes
+## 10. Testes
 
 - **Máquina de estados** — transições e retomada, com plugins falsos. Sem rede, sem ffmpeg.
 - **Seleção de trechos** — transcrições fixas em fixtures; testa o pós-processamento
   determinístico (bordas, sobreposição, duração), não a criatividade do LLM.
 - **Validação** — saídas malformadas de LLM não produzem ASS nem comando ffmpeg inválido.
-- **Autorização** — fonte sem registro é recusada; crédito obrigatório ausente bloqueia upload.
 - **Render** — teste de fumaça com 2s de vídeo sintético gerado pelo próprio ffmpeg.
 - **Rede** — respostas gravadas em fixtures. A suíte roda offline.
 
-## 12. Custos
+## 11. Custos
 
 | Item | Custo |
 |---|---|
@@ -399,7 +362,7 @@ no banco com mensagem, não apenas logados.
 
 Sem GPU. Sem modelo local obrigatório. Roda em qualquer máquina com CPU.
 
-## 13. Requisitos de máquina
+## 12. Requisitos de máquina
 
 Alvo declarado: **notebook com 4GB de RAM**. O desenho cabe nisso porque as
 etapas pesadas de memória rodam na nuvem.
@@ -407,7 +370,7 @@ etapas pesadas de memória rodam na nuvem.
 | Recurso | Mínimo | Observação |
 |---|---|---|
 | RAM | 2GB livres | Pico ~800MB (yt-dlp + ffmpeg + bot) |
-| Disco | 3GB livres por job | Download em duas fases (§4.1) evita baixar o episódio inteiro |
+| Disco | 3GB livres por job | Download em duas fases (§3.1) evita baixar o episódio inteiro |
 | CPU | qualquer | Define o tempo, não a viabilidade |
 | GPU | não usada | — |
 
@@ -422,7 +385,7 @@ trabalho: ffmpeg presente, disco livre suficiente, chaves de API válidas, token
 OAuth de cada canal, quota restante do dia. O bot roda isso na inicialização e
 avisa no Telegram se algo estiver faltando.
 
-## 14. Fora de escopo (YAGNI)
+## 13. Fora de escopo (YAGNI)
 
 Não entram nesta versão: interface web, geração de thumbnail, publicação em
 TikTok/Instagram, análise de desempenho dos vídeos, tradução, dublagem, camada
