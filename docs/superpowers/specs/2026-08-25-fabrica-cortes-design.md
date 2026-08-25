@@ -71,11 +71,11 @@ São **dois níveis**: o episódio e cada corte extraído dele.
 
 ```
 NOVO
- └─► BAIXADO        yt-dlp trouxe vídeo + áudio
-      └─► TRANSCRITO     Whisper, com tempo por palavra
-           └─► SEGMENTADO    LLM escolheu os trechos
-                └─► RENDERIZADO   todos os cortes gerados
-                     └─► CONCLUIDO    nenhum corte pendente de decisão
+ ├─► SEM_LEGENDA       vídeo sem faixa de legenda: encerra, nenhum corte
+ └─► LEGENDA_OBTIDA    faixas do YouTube, sem baixar mídia
+      └─► SEGMENTADO       LLM escolheu os trechos
+           └─► RENDERIZADO     todos os cortes gerados
+                └─► CONCLUIDO      nenhum corte pendente de decisão
 ```
 
 **Corte (filho do job), a partir de `RENDERIZADO`:**
@@ -109,7 +109,7 @@ vidbot/
   llm.py                Gemini / Groq / Ollama com fallback
   validate.py           Validação defensiva de toda saída de LLM
   download.py           yt-dlp: vídeo, áudio, metadados do episódio
-  transcribe.py         Whisper (Groq API ou faster-whisper local)
+  captions.py           Faixas de legenda do YouTube: texto + sincronia
   segment.py            Transcrição → trechos candidatos (LLM + heurísticas)
   reframe.py            16:9 → 9:16 (centro, rosto ou split)
   subtitles.py          Trecho + estilo → arquivo .ass
@@ -124,54 +124,41 @@ tokens/                 OAuth por canal (gitignored)
 
 Nada disso existe ainda: o repositório contém apenas este documento.
 
-## 4.1 Aquisição em três fases (`download.py`)
+## 4.1 Aquisição em duas fases (`download.py`)
 
-Baixar o episódio inteiro para usar 10% dele desperdiça banda, disco e tempo.
-E transcrever 2h de áudio para descobrir quais 12 minutos importam desperdiça
-mais ainda. A aquisição é escalonada, do mais barato ao mais caro.
+**Não há transcrição própria.** O YouTube já publica as faixas de legenda de
+cada vídeo, e elas bastam. Vídeo sem legenda não vira corte.
 
-### Fase 0 — a transcrição que já existe
-
-O YouTube publica as faixas de legenda de cada vídeo, e o yt-dlp as entrega sem
-baixar mídia nenhuma:
+### Fase 0 — a legenda que já existe
 
 ```python
-info = ydl.extract_info(url, download=False)
+info = ydl.extract_info(url, download=False)   # nenhuma midia baixada
 info["subtitles"]           # enviadas pelo autor
 info["automatic_captions"]  # ASR do YouTube, formato json3
 ```
 
-Custo: **um arquivo de texto, segundos**. Nada de áudio, nada de API.
+Custo: **um arquivo de texto, segundos**. Nada de áudio, nada de API, nada de
+modelo.
 
-**Cascata, na ordem:**
+**Duas faixas, dois papéis.** Elas costumam coexistir, e cada uma é melhor numa
+coisa:
 
-| # | Origem | Texto | Tempo | Uso |
-|---|---|---|---|---|
-| 1 | Legenda do autor | Boa, pontuada | Por linha | Seleção |
-| 2 | ASR do YouTube (`json3`) | Sem pontuação | **Por palavra** | Seleção |
-| 3 | Whisper no áudio completo | Melhor | Por palavra | Só se 1 e 2 faltarem |
+| Faixa | Texto | Tempo | Papel |
+|---|---|---|---|
+| ASR do YouTube (`json3`) | Sem pontuação | **Por palavra** | Sincronia da legenda |
+| Legenda do autor | Boa, pontuada | Por linha | Texto exibido e seleção |
 
-A opção 3 é o fallback: aciona a Fase 1 abaixo. As opções 1 e 2 a dispensam
-por completo.
+Quando as duas existem, o texto vem da do autor e a sincronia do ASR. Quando só
+há ASR, um passo de repontuação por LLM roda antes da seleção — o `segment.py`
+identifica limites de ideia muito melhor enxergando onde as frases terminam.
+Quando só há a do autor, o karaokê degrada para destaque **por linha** em vez de
+por palavra; continua legível, apenas menos vistoso.
 
-**Por que basta para escolher:** errar uma palavra não muda quais trechos
-prestam. A imprecisão do ASR é tolerável aqui — e intolerável na tela, que é
-outro momento (Fase 2).
+**Sem nenhuma faixa**, o job termina em `SEM_LEGENDA` e o bot avisa. Nenhum
+corte é produzido: transcrever por conta própria custaria mais tempo do que o
+episódio vale, e há sempre outro episódio.
 
-**Ressalva:** o ASR costuma vir sem pontuação, e isso atrapalha o `segment.py` —
-um LLM identifica limites de ideia muito melhor quando enxerga onde as frases
-terminam. Quando a origem for `automatic_captions`, um passo de repontuação
-por LLM roda antes da seleção; é barato e melhora bastante o resultado.
-
-### Fase 1 — áudio (só quando não há legenda)
-
-```
-formato: bestaudio  →  ~50-150MB para 2h
-```
-
-Transcrito pelo Whisper. É o caminho lento, evitado sempre que possível.
-
-### Fase 2 — apenas os trechos aprovados
+### Fase 1 — apenas os trechos aprovados
 
 ```
 --download-sections "*1834-1902"  (um por corte)
@@ -179,15 +166,11 @@ Transcrito pelo Whisper. É o caminho lento, evitado sempre que possível.
 ```
 
 Requisições HTTP com `Range` trazem só os segundos necessários: 12 cortes de 60s
-≈ 200MB, contra 1-3GB do episódio completo.
+≈ 200MB, contra 1-3GB do episódio completo. O episódio inteiro nunca existe na
+máquina.
 
 `--force-keyframes-at-cuts` reencoda as bordas para o corte cair no ponto que a
-transcrição indicou; sem isso o vídeo começa no keyframe anterior, até 5s antes.
-
-**O Whisper roda aqui**, sobre os trechos já cortados — ~12 minutos de áudio, não
-120. É a legenda que aparece na tela, então a precisão de palavra e a pontuação
-compensam o custo. A transcrição da Fase 0 serviu para *escolher*; esta serve
-para *legendar*.
+legenda indicou; sem isso o vídeo começa no keyframe anterior, até 5s antes.
 
 ### Decisões
 
@@ -200,10 +183,10 @@ para *legendar*.
   pelo autor costuma ser um bloco temático autocontido
 - O `--download-sections` depende de ffmpeg, já exigido pelo projeto
 
-**Manutenção:** o yt-dlp quebra quando o YouTube muda, e o acesso às legendas é
-justamente a parte que mais muda. `vidbot doctor` confere a versão instalada e
-avisa quando estiver defasada. A cascata é a proteção: se a Fase 0 parar de
-funcionar, o sistema degrada para áudio + Whisper em vez de falhar.
+**Risco concentrado:** sem transcrição própria, a Fase 0 é ponto único de falha —
+se o acesso às legendas quebrar, a fábrica para. É uma troca deliberada de
+robustez por simplicidade e velocidade. `vidbot doctor` confere a versão do
+yt-dlp e avisa quando estiver defasada, que é a mitigação disponível.
 
 A aquisição só ocorre para fontes com autorização registrada (§2).
 
@@ -381,7 +364,8 @@ Nada sobe sem toque humano. Publicado, o bot responde com o link do YouTube.
 | Link inválido ou não suportado | Bot recusa na entrada, sem criar job |
 | Arquivo enviado > 20MB | Bot explica o limite e pede o link |
 | yt-dlp falha / vídeo privado | 3 tentativas com backoff, depois avisa no Telegram |
-| Whisper falha | Fallback nuvem ↔ local |
+| Vídeo sem faixa de legenda | Job encerra em `SEM_LEGENDA`, bot avisa |
+| Só há legenda do autor | Karaokê degrada para destaque por linha |
 | LLM devolve JSON inválido | Reparo por extração; 2ª falha usa heurística sem LLM |
 | Nenhum trecho aprovado no filtro | Job termina em `SEM_CORTES`, avisa |
 | ffmpeg falha num corte | Corte marcado `ERRO`; os demais seguem |
@@ -407,7 +391,7 @@ no banco com mensagem, não apenas logados.
 | Item | Custo |
 |---|---|
 | yt-dlp, ffmpeg, OpenCV, SQLite | $0 |
-| Whisper | Groq free tier, ou local — só sobre os trechos (§4.1) |
+| Legendas | Faixas do próprio YouTube — sem transcrição |
 | LLM (seleção, títulos) | Gemini + Groq free tier |
 | YouTube API | $0 |
 | **Total corrente** | **$0** |
@@ -426,8 +410,8 @@ etapas pesadas de memória rodam na nuvem.
 | CPU | qualquer | Define o tempo, não a viabilidade |
 | GPU | não usada | — |
 
-**Whisper local é opcional e desligado por padrão.** Ligá-lo em máquina com
-menos de 6GB de RAM não é suportado: o modelo `small` sozinho pede ~2GB.
+**Nenhum modelo roda localmente.** Sem Whisper e sem GPU: a legenda vem pronta
+do YouTube e o LLM é API. O único processo pesado é o ffmpeg, que é CPU.
 
 O workdir de cada job é apagado ao chegar em `CONCLUIDO` ou `REJEITADO`. Um
 `vidbot limpar` remove órfãos de jobs interrompidos.
