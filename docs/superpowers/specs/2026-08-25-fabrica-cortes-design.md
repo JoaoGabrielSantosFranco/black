@@ -124,6 +124,49 @@ tokens/                 OAuth por canal (gitignored)
 
 Nada disso existe ainda: o repositório contém apenas este documento.
 
+## 4.1 Download em duas fases (`download.py`)
+
+Baixar o episódio inteiro para usar 10% dele desperdiça banda, disco e tempo —
+caro na máquina alvo. O download é dividido:
+
+**Fase 1 — áudio, antes de decidir qualquer coisa.**
+
+```
+formato: bestaudio  →  ~50-150MB para 2h
+```
+
+Basta para transcrever e escolher os trechos. Nenhum byte de vídeo ainda.
+
+**Fase 2 — apenas os trechos aprovados pelo filtro.**
+
+```
+--download-sections "*1834-1902"  (um por corte)
+--force-keyframes-at-cuts
+```
+
+Requisições HTTP com `Range` trazem só os segundos necessários: 12 cortes de 60s
+≈ 200MB, contra 1-3GB do episódio completo. Redução de 10-15×.
+
+`--force-keyframes-at-cuts` reencoda as bordas para o corte cair no ponto que a
+transcrição indicou; sem isso o vídeo começa no keyframe anterior, até 5s antes.
+
+**Decisões:**
+
+- yt-dlp entra como **biblioteca Python**, não subprocess — os `progress_hooks`
+  alimentam o progresso no Telegram (§9) sem parsing de texto
+- Formato preferido **H.264 ≤1080p + m4a**. VP9/AV1 economizam banda mas custam
+  muito mais CPU no encode, e CPU é o gargalo da máquina alvo
+- Formato sem suporte a range → **fallback para download completo**. Degrada, não falha
+- Os **capítulos** vindos do metadata alimentam `segment.py`: capítulo marcado
+  pelo autor costuma ser um bloco temático autocontido
+- O `--download-sections` depende de ffmpeg, já exigido pelo projeto
+
+**Manutenção:** o yt-dlp quebra quando o YouTube muda. `vidbot doctor` confere a
+versão instalada e avisa quando estiver defasada. Vídeos com restrição podem
+exigir cookies do navegador, configurável por fonte.
+
+O download só ocorre para fontes com autorização registrada (§2).
+
 ## 5. Seleção de trechos (`segment.py`)
 
 O passo que define a qualidade do produto.
@@ -339,7 +382,7 @@ etapas pesadas de memória rodam na nuvem.
 | Recurso | Mínimo | Observação |
 |---|---|---|
 | RAM | 2GB livres | Pico ~800MB (yt-dlp + ffmpeg + bot) |
-| Disco | 10GB livres por job | Episódio de 2h em 1080p ocupa 1-3GB, mais intermediários |
+| Disco | 3GB livres por job | Download em duas fases (§4.1) evita baixar o episódio inteiro |
 | CPU | qualquer | Define o tempo, não a viabilidade |
 | GPU | não usada | — |
 
