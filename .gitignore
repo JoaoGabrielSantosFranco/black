@@ -1,0 +1,9 @@
+.venv/
+work/
+output/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+tokens/
+perfis/*.local.yaml
