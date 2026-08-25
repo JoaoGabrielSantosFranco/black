@@ -50,7 +50,8 @@ quem a chamou.
 ```
                   ┌──────────────┐
    scheduler ────►│              │
-   CLI       ────►│  pipeline.py │◄──── bot telegram (aprovação)
+   CLI       ────►│  pipeline.py │◄──► bot telegram
+   bot       ────►│              │     (dispara, acompanha, aprova)
    (futuro CI)───►│              │
                   └──────┬───────┘
                          │  lê/grava estado
@@ -98,6 +99,7 @@ os cortes já renderizados não são refeitos.
 
 ```
 main.py                 CLI: ingest, run, schedule, bot, fontes, canais
+                        (a CLI segue completa; o bot é outro cliente dela)
 vidbot/
   db.py                 SQLite: jobs, cortes, fontes, canais, uploads
   config.py             .env + validação de credenciais
@@ -114,7 +116,7 @@ vidbot/
   render.py             ffmpeg: corte, reenquadre, legenda queimada
   youtube.py            Upload multi-canal, um token OAuth por canal
   scheduler.py          Cadências → jobs
-  bot.py                Telegram: aprovação com botões inline
+  bot.py                Telegram: entrada por link, status e aprovação
 fontes/                 Registros de autorização (§2)
 perfis/                 Canais de destino
 tokens/                 OAuth por canal (gitignored)
@@ -192,9 +194,50 @@ original quando `credito_obrigatorio`.
 
 Privacidade padrão: `unlisted`. Publicar como `public` é opção explícita do perfil.
 
-## 9. Aprovação (`bot.py`)
+## 9. Interface Telegram (`bot.py`)
 
-Terminado o render, o bot envia cada corte ao operador:
+O Telegram é a interface completa da fábrica: **dispara, acompanha e aprova**.
+O operador não precisa de terminal.
+
+### Entrada
+
+O operador manda um link do YouTube ao bot. O bot:
+
+1. Extrai o ID do vídeo e consulta os metadados (canal de origem, duração, título)
+2. **Verifica a autorização** da fonte (§2). Sem registro, recusa e oferece
+   registrar ali mesmo, guiando pelos campos obrigatórios
+3. Pergunta o canal de destino, se houver mais de um perfil
+4. Cria o job em `NOVO` e devolve o número
+
+```
+Operador: https://youtube.com/watch?v=XXXX
+
+Bot: 🎙 "Episódio 148 — título" · @exemplo · 1h52
+     ✅ Fonte autorizada (pública, verificada em 2026-08-25)
+     Publicar em qual canal?
+     [cortes_br]  [cortes_en]
+
+Operador: [cortes_br]
+
+Bot: ▶️ job #58 na fila. Aviso quando terminar.
+```
+
+Envio de **arquivo de vídeo** também é aceito, limitado a 20MB pela Bot API —
+suficiente para testes, não para episódios. O link é o caminho normal.
+
+### Acompanhamento
+
+Uma única mensagem de status é editada conforme o job avança, em vez de
+poluir a conversa:
+
+```
+job #58 · @exemplo
+✅ baixado   ✅ transcrito   ⏳ escolhendo trechos…
+```
+
+### Aprovação
+
+Terminado o render, cada corte chega individualmente:
 
 ```
 ✂️ job #58 · corte 3/12 — @exemplo
@@ -204,15 +247,26 @@ Terminado o render, o bot envia cada corte ao operador:
 [✅ Publicar] [🔄 Refazer] [❌ Descartar]
 ```
 
-Nada sobe sem toque humano. O bot só aceita comandos dos IDs em
-`TELEGRAM_ALLOWED_USER_IDS`. Cortes acima de 50MB vão como link para arquivo
-local em vez de upload ao Telegram.
+Nada sobe sem toque humano. Publicado, o bot responde com o link do YouTube.
+
+### Regras
+
+- Só responde aos IDs em `TELEGRAM_ALLOWED_USER_IDS`
+- Cortes acima de 50MB (limite de envio da Bot API) vão como caminho de arquivo
+  local em vez de anexo
+- Comandos auxiliares: `/jobs` (em andamento), `/fontes` (autorizações),
+  `/cancelar <id>`
+- O bot **enfileira**; não processa dentro do handler. Handler que renderiza
+  vídeo trava o bot inteiro
+- **Fora de escopo:** servidor Bot API local para arquivos até 2GB
 
 ## 10. Tratamento de erro
 
 | Falha | Resposta |
 |---|---|
 | Fonte sem autorização | `ERRO_SEM_AUTORIZACAO`, para antes de baixar |
+| Link inválido ou não suportado | Bot recusa na entrada, sem criar job |
+| Arquivo enviado > 20MB | Bot explica o limite e pede o link |
 | yt-dlp falha / vídeo privado | 3 tentativas com backoff, depois avisa no Telegram |
 | Whisper falha | Fallback nuvem ↔ local |
 | LLM devolve JSON inválido | Reparo por extração; 2ª falha usa heurística sem LLM |
