@@ -239,8 +239,9 @@ Gera arquivo `.ass`, queimado pelo ffmpeg. Estilo vem do perfil do canal e é
 validado com clamp e whitelist antes de virar arquivo (o LLM nunca escreve ASS
 diretamente).
 
-Modo padrão: karaokê, 1-3 palavras por vez, palavra ativa destacada — sincronizado
-pelos timestamps por palavra do Whisper.
+Modo padrão: karaokê, 1-3 palavras por vez, palavra ativa destacada —
+sincronizado pelos tempos por palavra do ASR do YouTube (§4.1). Havendo apenas
+legenda do autor, o destaque passa a ser por linha.
 
 Parâmetros: fonte, tamanho, cor primária, cor de destaque, contorno, posição,
 caixa de fundo, maiúsculas, palavras por cue.
