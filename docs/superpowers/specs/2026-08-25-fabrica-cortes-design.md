@@ -106,8 +106,8 @@ vidbot/
   fontes.py             Carrega e valida registros de autorização
   perfis.py             YAML por canal de destino
   pipeline.py           Máquina de estados. Conhece a ordem, não o "como"
-  llm.py           ✅   Gemini / Groq / Ollama com fallback (escrito)
-  plan.py          ✅   Validação defensiva de saída do LLM (adaptar schema)
+  llm.py                Gemini / Groq / Ollama com fallback
+  validate.py           Validação defensiva de toda saída de LLM
   download.py           yt-dlp: vídeo, áudio, metadados do episódio
   transcribe.py         Whisper (Groq API ou faster-whisper local)
   segment.py            Transcrição → trechos candidatos (LLM + heurísticas)
@@ -122,8 +122,7 @@ perfis/                 Canais de destino
 tokens/                 OAuth por canal (gitignored)
 ```
 
-`plan.py` e `llm.py` já existem e são reaproveitados; o schema validado em
-`plan.py` muda de "plano de vídeo" para "estilo de legenda + metadados".
+Nada disso existe ainda: o repositório contém apenas este documento.
 
 ## 5. Seleção de trechos (`segment.py`)
 
@@ -227,12 +226,43 @@ suficiente para testes, não para episódios. O link é o caminho normal.
 
 ### Acompanhamento
 
-Uma única mensagem de status é editada conforme o job avança, em vez de
-poluir a conversa:
+Numa máquina modesta um episódio leva de 20 a 60 minutos. O silêncio nesse
+intervalo é inaceitável — o operador precisa saber que está vivo e quanto falta.
+
+**Uma única mensagem** é criada ao aceitar o job e **editada** ao longo de todo
+o processamento, em vez de encher a conversa:
 
 ```
-job #58 · @exemplo
-✅ baixado   ✅ transcrito   ⏳ escolhendo trechos…
+🎬 job #58 · @exemplo · decorrido 12min
+
+✅ baixado         1.8 GB · 4min
+✅ transcrito      1h52 de áudio · 3min
+✅ trechos         12 escolhidos de 47 candidatos
+⏳ renderizando    4/12 ······· ~18min restantes
+```
+
+Origem de cada número:
+
+- **Download** — `progress_hooks` do yt-dlp dão bytes e percentual
+- **Render** — `ffmpeg -progress pipe:1` dá `out_time`, comparado à duração alvo
+- **Restante** — extrapolado do tempo médio dos cortes já concluídos; só aparece
+  depois do primeiro, quando a estimativa passa a ter base
+
+**Limitação de taxa:** a Bot API pune edições frequentes. As atualizações são
+represadas a no mínimo 5s de intervalo e só são enviadas quando o texto muda de
+fato. Um `429` nunca derruba o job — o feedback é acessório, o processamento não
+depende dele.
+
+**Ao falhar**, a mesma mensagem vira o relato do erro, com a etapa que quebrou e
+o que fazer:
+
+```
+🎬 job #58 · @exemplo
+✅ baixado   ✅ transcrito   ❌ renderizando
+
+Corte 5/12 falhou: ffmpeg encerrou com código 1
+Os outros 11 seguiram normalmente.
+[🔄 Refazer o corte 5]  [📄 Ver log]
 ```
 
 ### Aprovação
@@ -301,7 +331,30 @@ no banco com mensagem, não apenas logados.
 
 Sem GPU. Sem modelo local obrigatório. Roda em qualquer máquina com CPU.
 
-## 13. Fora de escopo (YAGNI)
+## 13. Requisitos de máquina
+
+Alvo declarado: **notebook com 4GB de RAM**. O desenho cabe nisso porque as
+etapas pesadas de memória rodam na nuvem.
+
+| Recurso | Mínimo | Observação |
+|---|---|---|
+| RAM | 2GB livres | Pico ~800MB (yt-dlp + ffmpeg + bot) |
+| Disco | 10GB livres por job | Episódio de 2h em 1080p ocupa 1-3GB, mais intermediários |
+| CPU | qualquer | Define o tempo, não a viabilidade |
+| GPU | não usada | — |
+
+**Whisper local é opcional e desligado por padrão.** Ligá-lo em máquina com
+menos de 6GB de RAM não é suportado: o modelo `small` sozinho pede ~2GB.
+
+O workdir de cada job é apagado ao chegar em `CONCLUIDO` ou `REJEITADO`. Um
+`vidbot limpar` remove órfãos de jobs interrompidos.
+
+**`vidbot doctor`** — comando de diagnóstico que confere antes de aceitar
+trabalho: ffmpeg presente, disco livre suficiente, chaves de API válidas, token
+OAuth de cada canal, quota restante do dia. O bot roda isso na inicialização e
+avisa no Telegram se algo estiver faltando.
+
+## 14. Fora de escopo (YAGNI)
 
 Não entram nesta versão: interface web, geração de thumbnail, publicação em
 TikTok/Instagram, análise de desempenho dos vídeos, tradução, dublagem, camada
