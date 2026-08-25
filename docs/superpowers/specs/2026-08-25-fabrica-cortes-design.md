@@ -64,23 +64,35 @@ Essa separação é deliberada: migrar para GitHub Actions depois é escrever um
 
 ### Máquina de estados
 
+São **dois níveis**: o episódio e cada corte extraído dele.
+
+**Job (episódio):**
+
 ```
 NOVO
- └─► BAIXADO          yt-dlp trouxe vídeo + áudio
-      └─► TRANSCRITO       Whisper, com tempo por palavra
-           └─► SEGMENTADO       LLM escolheu os trechos
-                └─► RENDERIZADO      ffmpeg cortou, reenquadrou, legendou
-                     └─► AGUARDANDO_APROVACAO
-                          ├─► PUBLICADO
-                          ├─► REJEITADO
-                          └─► REFAZER ──► volta a SEGMENTADO
+ └─► BAIXADO        yt-dlp trouxe vídeo + áudio
+      └─► TRANSCRITO     Whisper, com tempo por palavra
+           └─► SEGMENTADO    LLM escolheu os trechos
+                └─► RENDERIZADO   todos os cortes gerados
+                     └─► CONCLUIDO    nenhum corte pendente de decisão
 ```
 
-Cada transição é uma função `(job, workdir) -> novo_estado`, idempotente e
-retomável. Queda de energia no meio do render: o job retoma de `SEGMENTADO`.
+**Corte (filho do job), a partir de `RENDERIZADO`:**
 
-Um job = um episódio. Cada trecho escolhido vira um **corte** (tabela filha) com
-seu próprio estado de aprovação e publicação.
+```
+AGUARDANDO_APROVACAO
+ ├─► APROVADO ──► PUBLICADO      (upload imediato, se houver quota)
+ │        └────► ERRO_UPLOAD     (retentável)
+ ├─► REJEITADO
+ └─► REFAZER ──► volta ao job em SEGMENTADO, só para este corte
+```
+
+O job chega a `CONCLUIDO` quando nenhum corte está em
+`AGUARDANDO_APROVACAO` nem em `APROVADO`.
+
+Cada transição é uma função `(entidade, workdir) -> novo_estado`, idempotente e
+retomável. Queda de energia no meio do render: o job retoma de `SEGMENTADO`, e
+os cortes já renderizados não são refeitos.
 
 ## 4. Componentes
 
@@ -171,9 +183,9 @@ caixa de fundo, maiúsculas, palavras por cue.
 Um arquivo de token OAuth por canal de destino. O perfil aponta qual usar.
 
 **Quota:** 10.000 unidades/dia por projeto, 1.600 por upload → ~6 uploads/dia.
-O sistema mantém um contador diário no banco. Ao esgotar, os cortes aprovados
-ficam em `AGUARDANDO_APROVACAO` com flag `aprovado=1` e sobem no dia seguinte —
-aprovação não se perde por falta de quota.
+O sistema mantém um contador diário no banco. Ao esgotar, os cortes permanecem
+em `APROVADO` e o scheduler os drena no dia seguinte, na ordem em que foram
+aprovados — aprovação nunca se perde por falta de quota.
 
 Descrição montada automaticamente: texto do perfil + crédito e link do episódio
 original quando `credito_obrigatorio`.
