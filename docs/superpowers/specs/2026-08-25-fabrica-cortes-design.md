@@ -124,20 +124,54 @@ tokens/                 OAuth por canal (gitignored)
 
 Nada disso existe ainda: o repositório contém apenas este documento.
 
-## 4.1 Download em duas fases (`download.py`)
+## 4.1 Aquisição em três fases (`download.py`)
 
-Baixar o episódio inteiro para usar 10% dele desperdiça banda, disco e tempo —
-caro na máquina alvo. O download é dividido:
+Baixar o episódio inteiro para usar 10% dele desperdiça banda, disco e tempo.
+E transcrever 2h de áudio para descobrir quais 12 minutos importam desperdiça
+mais ainda. A aquisição é escalonada, do mais barato ao mais caro.
 
-**Fase 1 — áudio, antes de decidir qualquer coisa.**
+### Fase 0 — a transcrição que já existe
+
+O YouTube publica as faixas de legenda de cada vídeo, e o yt-dlp as entrega sem
+baixar mídia nenhuma:
+
+```python
+info = ydl.extract_info(url, download=False)
+info["subtitles"]           # enviadas pelo autor
+info["automatic_captions"]  # ASR do YouTube, formato json3
+```
+
+Custo: **um arquivo de texto, segundos**. Nada de áudio, nada de API.
+
+**Cascata, na ordem:**
+
+| # | Origem | Texto | Tempo | Uso |
+|---|---|---|---|---|
+| 1 | Legenda do autor | Boa, pontuada | Por linha | Seleção |
+| 2 | ASR do YouTube (`json3`) | Sem pontuação | **Por palavra** | Seleção |
+| 3 | Whisper no áudio completo | Melhor | Por palavra | Só se 1 e 2 faltarem |
+
+A opção 3 é o fallback: aciona a Fase 1 abaixo. As opções 1 e 2 a dispensam
+por completo.
+
+**Por que basta para escolher:** errar uma palavra não muda quais trechos
+prestam. A imprecisão do ASR é tolerável aqui — e intolerável na tela, que é
+outro momento (Fase 2).
+
+**Ressalva:** o ASR costuma vir sem pontuação, e isso atrapalha o `segment.py` —
+um LLM identifica limites de ideia muito melhor quando enxerga onde as frases
+terminam. Quando a origem for `automatic_captions`, um passo de repontuação
+por LLM roda antes da seleção; é barato e melhora bastante o resultado.
+
+### Fase 1 — áudio (só quando não há legenda)
 
 ```
 formato: bestaudio  →  ~50-150MB para 2h
 ```
 
-Basta para transcrever e escolher os trechos. Nenhum byte de vídeo ainda.
+Transcrito pelo Whisper. É o caminho lento, evitado sempre que possível.
 
-**Fase 2 — apenas os trechos aprovados pelo filtro.**
+### Fase 2 — apenas os trechos aprovados
 
 ```
 --download-sections "*1834-1902"  (um por corte)
@@ -145,27 +179,33 @@ Basta para transcrever e escolher os trechos. Nenhum byte de vídeo ainda.
 ```
 
 Requisições HTTP com `Range` trazem só os segundos necessários: 12 cortes de 60s
-≈ 200MB, contra 1-3GB do episódio completo. Redução de 10-15×.
+≈ 200MB, contra 1-3GB do episódio completo.
 
 `--force-keyframes-at-cuts` reencoda as bordas para o corte cair no ponto que a
 transcrição indicou; sem isso o vídeo começa no keyframe anterior, até 5s antes.
 
-**Decisões:**
+**O Whisper roda aqui**, sobre os trechos já cortados — ~12 minutos de áudio, não
+120. É a legenda que aparece na tela, então a precisão de palavra e a pontuação
+compensam o custo. A transcrição da Fase 0 serviu para *escolher*; esta serve
+para *legendar*.
+
+### Decisões
 
 - yt-dlp entra como **biblioteca Python**, não subprocess — os `progress_hooks`
   alimentam o progresso no Telegram (§9) sem parsing de texto
 - Formato preferido **H.264 ≤1080p + m4a**. VP9/AV1 economizam banda mas custam
   muito mais CPU no encode, e CPU é o gargalo da máquina alvo
-- Formato sem suporte a range → **fallback para download completo**. Degrada, não falha
+- Formato sem suporte a range → **fallback para download completo**
 - Os **capítulos** vindos do metadata alimentam `segment.py`: capítulo marcado
   pelo autor costuma ser um bloco temático autocontido
 - O `--download-sections` depende de ffmpeg, já exigido pelo projeto
 
-**Manutenção:** o yt-dlp quebra quando o YouTube muda. `vidbot doctor` confere a
-versão instalada e avisa quando estiver defasada. Vídeos com restrição podem
-exigir cookies do navegador, configurável por fonte.
+**Manutenção:** o yt-dlp quebra quando o YouTube muda, e o acesso às legendas é
+justamente a parte que mais muda. `vidbot doctor` confere a versão instalada e
+avisa quando estiver defasada. A cascata é a proteção: se a Fase 0 parar de
+funcionar, o sistema degrada para áudio + Whisper em vez de falhar.
 
-O download só ocorre para fontes com autorização registrada (§2).
+A aquisição só ocorre para fontes com autorização registrada (§2).
 
 ## 5. Seleção de trechos (`segment.py`)
 
@@ -367,7 +407,7 @@ no banco com mensagem, não apenas logados.
 | Item | Custo |
 |---|---|
 | yt-dlp, ffmpeg, OpenCV, SQLite | $0 |
-| Whisper | Groq free tier, ou local |
+| Whisper | Groq free tier, ou local — só sobre os trechos (§4.1) |
 | LLM (seleção, títulos) | Gemini + Groq free tier |
 | YouTube API | $0 |
 | **Total corrente** | **$0** |
