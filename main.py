@@ -9,11 +9,6 @@ from vidbot import config, db, estados as e, pipeline
 from vidbot.urls import extrair_video_id
 
 
-def montar_passos() -> dict[str, pipeline.Passo]:
-    """Etapas reais do pipeline. Preenchido pelas tarefas 5 em diante."""
-    return {}
-
-
 def _con(args):
     caminho = Path(args.db) if args.db else config.carregar().db_path
     return db.conectar(caminho)
@@ -59,19 +54,44 @@ def cmd_jobs(args) -> int:
 
 
 def cmd_run(args) -> int:
+    from vidbot import etapas, perfis as mod_perfis
+
     con = _con(args)
     try:
         cfg = config.carregar()
-        passos = montar_passos()
-        pendentes = [s for s in passos] or [e.NOVO]
         job = (db.obter_job(con, args.job) if args.job
-               else db.proximo_job(con, pendentes))
+               else db.proximo_job(con, [e.NOVO, e.LEGENDA_OBTIDA, e.SEGMENTADO]))
         if job is None:
             print("nada a fazer")
             return 0
+        todos = mod_perfis.carregar_todos(Path("perfis"))
+        perfil = todos.get(job.perfil) or etapas.PERFIL_PADRAO
+        passos = etapas.montar(con, cfg, perfil)
         final = pipeline.executar_job(con, job.id, passos, cfg.work_dir)
         print(f"job #{job.id} terminou em {final}")
         return 0 if final != e.ERRO else 1
+    finally:
+        con.close()
+
+
+def cmd_limpar(args) -> int:
+    """Remove workdirs de jobs que ja terminaram."""
+    import shutil
+
+    con = _con(args)
+    try:
+        cfg = config.carregar()
+        finais = ",".join("?" * len(e.JOB_FINAIS))
+        ids = [r["id"] for r in con.execute(
+            f"SELECT id FROM jobs WHERE estado IN ({finais})", list(e.JOB_FINAIS))]
+        removidos = 0
+        for job_id in ids:
+            d = Path(cfg.work_dir) / str(job_id)
+            if d.is_dir():
+                shutil.rmtree(d)
+                removidos += 1
+        print(f"{removidos} workdir(s) removido(s)")
+        return 0
     finally:
         con.close()
 
@@ -91,10 +111,12 @@ def main(argv=None) -> int:
     p_run = sub.add_parser("run", help="avanca um job ate onde der")
     p_run.add_argument("--job", type=int, help="id; sem isso pega o proximo")
 
+    sub.add_parser("limpar", help="apaga workdirs de jobs encerrados")
+
     args = parser.parse_args(argv)
     return {
-        "doctor": cmd_doctor, "ingest": cmd_ingest,
-        "jobs": cmd_jobs, "run": cmd_run,
+        "doctor": cmd_doctor, "ingest": cmd_ingest, "jobs": cmd_jobs,
+        "run": cmd_run, "limpar": cmd_limpar,
     }[args.cmd](args)
 
 
