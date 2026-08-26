@@ -224,7 +224,7 @@ def transicionar_corte(con, corte_id: int, de: str, para: str, erro: str | None 
     return cur.rowcount == 1
 
 
-def definir_caminho_corte(con, corte_id: int, caminho: str) -> None:
+def definir_caminho_corte(con, corte_id: int, caminho: str | None) -> None:
     con.execute("UPDATE cortes SET caminho=? WHERE id=?", (caminho, corte_id))
 
 

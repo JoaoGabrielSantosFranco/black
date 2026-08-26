@@ -143,3 +143,134 @@ def test_erro_de_upload_fica_gravado_no_corte(con):
     bot.publicar_ou_avisar(con, corte, perfis.Perfil(nome="p"), {"url_original": "u"},
                            ServicoQuebrado())
     assert "backend error" in db.obter_corte(con, corte.id).erro
+
+
+# ------------------------------------------------- formatacao das mensagens
+
+def test_tempo_vira_hms_em_video_longo():
+    assert bot.tempo_hms(5022) == "01:23:42"
+
+
+def test_tempo_curto_omite_a_hora():
+    assert bot.tempo_hms(47) == "00:47"
+    assert bot.tempo_hms(125) == "02:05"
+
+
+class _Corte:
+    id = 9
+    titulo = "ELE ACHOU QUE IA DAR CERTO"
+    descricao = "Leon tenta uma estrategia inesperada e o resultado e absurdo"
+    inicio_s = 5022.0
+    fim_s = 5069.0
+    duracao_s = 47.0
+    nota = 92
+
+
+class _Job:
+    titulo = "LEON E NILCE JOGAM POR 2 HORAS"
+    canal_origem = "@leon"
+
+
+def test_texto_do_corte_mostra_a_descricao_da_ia():
+    texto = bot.montar_texto_corte(_Corte())
+    assert "estrategia inesperada" in texto
+
+
+def test_texto_do_corte_usa_janela_legivel():
+    texto = bot.montar_texto_corte(_Corte())
+    assert "01:23:42" in texto and "01:24:29" in texto and "47s" in texto
+
+
+def test_texto_do_corte_mostra_a_origem_quando_ha_job():
+    texto = bot.montar_texto_corte(_Corte(), _Job())
+    assert "@leon" in texto and "LEON E NILCE" in texto
+
+
+def test_texto_do_corte_escapa_html_do_modelo():
+    """Titulo vem do LLM: um < solto quebraria o parse_mode do Telegram."""
+    class Hostil(_Corte):
+        titulo = "olha o <b> disso & aquilo"
+        descricao = ""
+
+    texto = bot.montar_texto_corte(Hostil())
+    assert "&lt;b&gt;" in texto and "&amp;" in texto
+
+
+def test_texto_do_corte_sem_descricao_nao_deixa_buraco():
+    class SemDescricao(_Corte):
+        descricao = ""
+
+    texto = bot.montar_texto_corte(SemDescricao())
+    assert "\n\n\n" not in texto and "ELE ACHOU" in texto
+
+
+def test_ajuda_lista_os_comandos_que_existem():
+    ajuda = bot.montar_ajuda()
+    for comando in ("/cortes", "/status", "/canais", "/fila", "/ajuda"):
+        assert comando in ajuda
+
+
+def test_status_resume_a_fabrica(con):
+    from vidbot import canais
+
+    canais.cadastrar(con, "@leon", "cortes_br")
+    jid = db.criar_job(con, "u", "A", "Ep", "@x", 600, "cortes_br")
+    cid = db.criar_corte(con, jid, 0, 40, "t", 90)
+    db.definir_caminho_corte(con, cid, "/w/1.mp4")
+    texto = bot.montar_status(con)
+    assert "1" in texto and "canal" in texto.lower()
+    assert "aprova" in texto.lower() and "cota" in texto.lower()
+
+
+def test_status_com_tudo_vazio_nao_quebra(con):
+    assert bot.montar_status(con)
+
+
+def test_texto_dos_canais_lista_os_monitorados(con):
+    from vidbot import canais
+
+    canais.cadastrar(con, "@leon", "cortes_br")
+    canais.cadastrar(con, "@nilce", "cortes_br")
+    texto = bot.montar_texto_canais(con)
+    assert "@leon" in texto and "@nilce" in texto
+
+
+def test_texto_dos_canais_vazio_ensina_a_cadastrar(con):
+    texto = bot.montar_texto_canais(con)
+    assert "canais add" in texto
+
+
+# ------------------------------------------------- refazer de verdade
+
+def _corte_renderizado(con):
+    jid = db.criar_job(con, "u", "A", "Ep", "@x", 600, "p")
+    cid = db.criar_corte(con, jid, 0.0, 40.0, "t", 80)
+    db.definir_caminho_corte(con, cid, "/w/1.mp4")
+    db.transicionar_job(con, jid, e.NOVO, e.LEGENDA_OBTIDA)
+    db.transicionar_job(con, jid, e.LEGENDA_OBTIDA, e.SEGMENTADO)
+    db.transicionar_job(con, jid, e.SEGMENTADO, e.RENDERIZADO)
+    return jid, cid
+
+
+def test_refazer_devolve_o_corte_para_a_fila_de_render(con):
+    """O botao so vale se algo de fato re-renderiza: limpa o arquivo e
+    volta o job para SEGMENTADO."""
+    jid, cid = _corte_renderizado(con)
+    bot.decidir_corte(con, "refazer", cid)
+    corte = db.obter_corte(con, cid)
+    assert corte.caminho is None
+    assert corte.estado == e.AGUARDANDO_APROVACAO
+    assert db.obter_job(con, jid).estado == e.SEGMENTADO
+
+
+def test_corte_a_refazer_some_da_lista_ate_renderizar(con):
+    _jid, cid = _corte_renderizado(con)
+    bot.decidir_corte(con, "refazer", cid)
+    assert db.listar_cortes_pendentes(con) == []
+
+
+def test_refazer_nao_mexe_no_job_que_nao_esta_renderizado(con):
+    jid = db.criar_job(con, "u", "A", "Ep", "@x", 600, "p")
+    cid = db.criar_corte(con, jid, 0.0, 40.0, "t", 80)
+    bot.decidir_corte(con, "refazer", cid)
+    assert db.obter_job(con, jid).estado == e.NOVO

@@ -4,6 +4,7 @@ O bot enfileira; nao processa. Handler que renderiza video trava o bot inteiro.
 """
 from __future__ import annotations
 
+import html
 import logging
 from pathlib import Path
 
@@ -40,7 +41,24 @@ def decidir_corte(con, acao: str, corte_id: int) -> str:
         raise ValueError(f"acao desconhecida: {acao}")
     if not db.transicionar_corte(con, corte_id, e.AGUARDANDO_APROVACAO, destino):
         raise JaDecidido(f"corte {corte_id} nao esta aguardando aprovacao")
+    if destino == e.REFAZER:
+        _reenfileirar_render(con, corte_id)
     return destino
+
+
+def _reenfileirar_render(con, corte_id: int) -> None:
+    """Devolve o corte para a fila de renderizacao.
+
+    Sem isto REFAZER seria um beco sem saida: o corte sairia da lista e nada
+    o traria de volta. Apagar o `caminho` faz `fazer_renderizar` deixar de
+    pular esse corte, e o job volta a SEGMENTADO para a etapa rodar de novo.
+    """
+    db.definir_caminho_corte(con, corte_id, None)
+    db.transicionar_corte(con, corte_id, e.REFAZER, e.AGUARDANDO_APROVACAO)
+    corte = db.obter_corte(con, corte_id)
+    job = db.obter_job(con, corte.job_id) if corte else None
+    if job is not None and job.estado == e.RENDERIZADO:
+        db.transicionar_job(con, job.id, e.RENDERIZADO, e.SEGMENTADO)
 
 
 def teclado_do_corte(corte_id: int) -> list[list[tuple[str, str]]]:
@@ -52,10 +70,108 @@ def teclado_do_corte(corte_id: int) -> list[list[tuple[str, str]]]:
     ]]
 
 
-def montar_texto_corte(corte) -> str:
-    return (f"corte #{corte.id} · {corte.titulo}\n"
-            f"{corte.inicio_s:.0f}s -> {corte.fim_s:.0f}s "
-            f"({corte.duracao_s:.0f}s) · nota {corte.nota}")
+def tempo_hms(segundos: float) -> str:
+    """mm:ss em video curto, hh:mm:ss quando passa da hora.
+
+    Num episodio de 2h, `5022s` nao diz nada; `01:23:42` localiza o trecho.
+    """
+    total = max(0, int(segundos))
+    horas, resto = divmod(total, 3600)
+    minutos, seg = divmod(resto, 60)
+    if horas:
+        return f"{horas:02d}:{minutos:02d}:{seg:02d}"
+    return f"{minutos:02d}:{seg:02d}"
+
+
+def montar_texto_corte(corte, job=None) -> str:
+    """Cartao de um corte. Escapa tudo que veio do modelo: o parse_mode e
+    HTML e um `<` solto no titulo quebraria a mensagem inteira."""
+    titulo = html.escape(corte.titulo or "sem titulo")
+    linhas = [f"<b>{titulo}</b>",
+              f"corte #{corte.id} · nota {corte.nota}/100"]
+
+    descricao = html.escape(getattr(corte, "descricao", "") or "")
+    if descricao:
+        linhas += ["", descricao]
+
+    linhas += ["",
+               f"⏱ {tempo_hms(corte.inicio_s)} → {tempo_hms(corte.fim_s)}"
+               f" ({corte.duracao_s:.0f}s)"]
+    if job is not None:
+        origem = html.escape(job.titulo or "")
+        canal = html.escape(job.canal_origem or "")
+        linhas.append(f"📺 {canal}{' · ' if canal and origem else ''}{origem}")
+    return "\n".join(linhas)
+
+
+def montar_ajuda() -> str:
+    return (
+        "<b>Fábrica de cortes</b>\n"
+        "Eu observo os canais cadastrados, acho os melhores trechos dos vídeos "
+        "novos e monto os Shorts. Você só decide o que vai ao ar.\n\n"
+        "/cortes — os cortes prontos esperando sua decisão\n"
+        "/status — panorama da fábrica (canais, fila, cota do dia)\n"
+        "/canais — os canais que estou monitorando\n"
+        "/fila — cortes aprovados que ainda não subiram\n"
+        "/ajuda — esta mensagem\n\n"
+        "Em cada corte você recebe o vídeo e três botões: "
+        "<b>Publicar</b> sobe no YouTube, <b>Refazer</b> devolve para nova "
+        "renderização e <b>Descartar</b> joga fora."
+    )
+
+
+def montar_status(con) -> str:
+    from . import canais as mod_canais
+
+    ativos = len(mod_canais.listar(con, so_ativos=True))
+    total_canais = len(mod_canais.listar(con))
+    pendentes = len(db.listar_cortes_pendentes(con, limite=999))
+    fila = len(db.listar_cortes_aprovados(con, limite=999))
+    restantes = yt.uploads_restantes(con, yt.hoje())
+
+    em_curso = con.execute(
+        "SELECT COUNT(*) c FROM jobs WHERE estado IN (?,?,?)",
+        (e.NOVO, e.LEGENDA_OBTIDA, e.SEGMENTADO)).fetchone()["c"]
+
+    return (
+        "<b>Status da fábrica</b>\n\n"
+        f"📡 {ativos} canal(is) ativo(s) de {total_canais} cadastrado(s)\n"
+        f"⚙️ {em_curso} vídeo(s) em processamento\n"
+        f"🎬 {pendentes} corte(s) aguardando sua aprovação\n"
+        f"📤 {fila} na fila de upload\n"
+        f"📊 cota de hoje: {restantes} upload(s) restante(s)"
+    )
+
+
+def montar_texto_canais(con) -> str:
+    from . import canais as mod_canais
+
+    registrados = mod_canais.listar(con)
+    if not registrados:
+        return ("Nenhum canal monitorado ainda.\n\n"
+                "No servidor, cadastre com:\n"
+                "<code>main.py canais add @handle -p perfil</code>")
+    linhas = ["<b>Canais monitorados</b>", ""]
+    for c in registrados:
+        marca = "🟢" if c.ativo else "⏸"
+        nome = html.escape(c.nome or c.url)
+        perfil = html.escape(c.perfil)
+        visto = c.visto_em or "nunca"
+        linhas.append(f"{marca} <b>{nome}</b> · perfil {perfil}\n"
+                      f"    última varredura: {visto}")
+    return "\n".join(linhas)
+
+
+def montar_texto_fila(con) -> str:
+    aprovados = db.listar_cortes_aprovados(con, limite=50)
+    if not aprovados:
+        return "Nenhum corte esperando upload."
+    restantes = yt.uploads_restantes(con, yt.hoje())
+    linhas = [f"<b>Fila de upload</b> ({len(aprovados)}) · "
+              f"cota hoje: {restantes}", ""]
+    for c in aprovados:
+        linhas.append(f"#{c.id} · {html.escape(c.titulo or 'sem titulo')}")
+    return "\n".join(linhas)
 
 
 def publicar_ou_avisar(con, corte, perfil, meta: dict, servico) -> str:
@@ -92,26 +208,107 @@ def _quem(update) -> int | None:
     return usuario.id if usuario is not None else None
 
 
-async def _cortes(update, context) -> None:
-    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+HTML = "HTML"
+# Bots sobem no maximo 50 MB pela Bot API; acima disso mandamos so o cartao.
+LIMITE_VIDEO = 50 * 1024 * 1024
 
-    dados = context.bot_data
+
+async def _porteiro(update, context):
+    """Devolve a mensagem quando o autor pode falar comigo; None caso contrario."""
     mensagem = update.effective_message
     if mensagem is None:
+        return None
+    if not autorizado(_quem(update), context.bot_data["cfg"]):
+        await mensagem.reply_text(
+            "Você não está na lista de operadores deste bot.")
+        return None
+    return mensagem
+
+
+def _teclado(corte_id):
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(rotulo, callback_data=cb) for rotulo, cb in linha]
+        for linha in teclado_do_corte(corte_id)
+    ])
+
+
+async def _enviar_corte(mensagem, con, corte) -> None:
+    """Manda o video com o cartao na legenda; cai para so texto se nao der.
+
+    Aprovar sem ver o video e o pior default possivel, entao o arquivo vem
+    junto sempre que couber no limite da Bot API.
+    """
+    job = db.obter_job(con, corte.job_id)
+    texto = montar_texto_corte(corte, job)
+    teclado = _teclado(corte.id)
+
+    caminho = Path(corte.caminho) if corte.caminho else None
+    cabe = (caminho is not None and caminho.is_file()
+            and caminho.stat().st_size <= LIMITE_VIDEO)
+    if cabe:
+        try:
+            with caminho.open("rb") as video:
+                await mensagem.reply_video(
+                    video, caption=texto, parse_mode=HTML,
+                    reply_markup=teclado, supports_streaming=True)
+            return
+        except Exception as erro:  # noqa: BLE001 - o cartao ainda tem valor
+            log.warning("nao consegui enviar o video do corte %s: %s", corte.id, erro)
+
+    aviso = "" if caminho is None else "\n\n<i>(vídeo grande demais para o Telegram)</i>"
+    await mensagem.reply_text(texto + aviso, parse_mode=HTML, reply_markup=teclado)
+
+
+async def _cortes(update, context) -> None:
+    mensagem = await _porteiro(update, context)
+    if mensagem is None:
         return
-    if not autorizado(_quem(update), dados["cfg"]):
-        await mensagem.reply_text("nao autorizado")
-        return
-    pendentes = db.listar_cortes_pendentes(dados["con"])
+    con = context.bot_data["con"]
+    pendentes = db.listar_cortes_pendentes(con)
     if not pendentes:
-        await mensagem.reply_text("nenhum corte aguardando aprovacao")
+        await mensagem.reply_text(
+            "Nenhum corte esperando decisão agora. Use /status para ver a fábrica.")
         return
+    await mensagem.reply_text(
+        f"{len(pendentes)} corte(s) esperando sua decisão:")
     for corte in pendentes:
-        teclado = InlineKeyboardMarkup([
-            [InlineKeyboardButton(rotulo, callback_data=cb) for rotulo, cb in linha]
-            for linha in teclado_do_corte(corte.id)
-        ])
-        await mensagem.reply_text(montar_texto_corte(corte), reply_markup=teclado)
+        await _enviar_corte(mensagem, con, corte)
+
+
+async def _ajuda(update, context) -> None:
+    mensagem = await _porteiro(update, context)
+    if mensagem is not None:
+        await mensagem.reply_text(montar_ajuda(), parse_mode=HTML)
+
+
+async def _status(update, context) -> None:
+    mensagem = await _porteiro(update, context)
+    if mensagem is not None:
+        await mensagem.reply_text(
+            montar_status(context.bot_data["con"]), parse_mode=HTML)
+
+
+async def _canais(update, context) -> None:
+    mensagem = await _porteiro(update, context)
+    if mensagem is not None:
+        await mensagem.reply_text(
+            montar_texto_canais(context.bot_data["con"]), parse_mode=HTML)
+
+
+async def _fila(update, context) -> None:
+    mensagem = await _porteiro(update, context)
+    if mensagem is not None:
+        await mensagem.reply_text(
+            montar_texto_fila(context.bot_data["con"]), parse_mode=HTML)
+
+
+async def _desconhecido(update, context) -> None:
+    mensagem = await _porteiro(update, context)
+    if mensagem is not None:
+        await mensagem.reply_text(
+            "Não conheço esse comando.\n\n" + montar_ajuda(), parse_mode=HTML)
 
 
 async def _decisao(update, context) -> None:
@@ -140,20 +337,39 @@ async def _decisao(update, context) -> None:
         return
 
     corte = db.obter_corte(con, corte_id)
+    job = db.obter_job(con, corte.job_id)
+    rotulo = {e.REJEITADO: "🗑 descartado",
+              e.REFAZER: "🔁 marcado para refazer"}.get(destino, destino)
     if destino != e.APROVADO:
-        await query.edit_message_text(f"{montar_texto_corte(corte)}\n\nestado: {destino}")
+        await _fechar(query, f"{montar_texto_corte(corte, job)}\n\n<b>{rotulo}</b>")
         await query.answer()
         return
 
     # O upload e sincrono e pode levar minutos: fora da thread do loop, senao
     # o bot inteiro congela e o proprio callback expira antes da resposta.
     await query.answer("publicando...")
-    job = db.obter_job(con, corte.job_id)
+    await _fechar(query, f"{montar_texto_corte(corte, job)}\n\n⏳ <i>publicando…</i>")
     perfil = dados["perfis"].get(job.perfil, dados["perfil_padrao"])
     meta = yt.meta_do_job(dados["cfg"], job)
     resultado = await asyncio.to_thread(
         _publicar_bloqueante, dados["db_path"], corte, perfil, meta, dados["tokens_dir"])
-    await query.edit_message_text(f"{montar_texto_corte(corte)}\n\n{resultado}")
+    await _fechar(query,
+                  f"{montar_texto_corte(corte, job)}\n\n{html.escape(resultado)}")
+
+
+async def _fechar(query, texto: str) -> None:
+    """Reescreve o cartao ja decidido e tira os botoes.
+
+    O corte pode ter vindo como video: ai a mensagem tem legenda, nao texto,
+    e `edit_message_text` falharia.
+    """
+    try:
+        if query.message is not None and query.message.caption is not None:
+            await query.edit_message_caption(caption=texto, parse_mode=HTML)
+        else:
+            await query.edit_message_text(texto, parse_mode=HTML)
+    except Exception as erro:  # noqa: BLE001 - decisao ja foi gravada no banco
+        log.warning("nao consegui atualizar o cartao: %s", erro)
 
 
 def _publicar_bloqueante(db_path, corte, perfil, meta, tokens_dir) -> str:
@@ -183,7 +399,8 @@ def criar_app(cfg, con, db_path, perfis_dir: Path | None = None,
     costuma subir por systemd/cron de um diretorio qualquer, e resolver por
     CWD faria todo perfil virar o padrao (sem token, nunca publica).
     """
-    from telegram.ext import Application, CallbackQueryHandler, CommandHandler
+    from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
+                              MessageHandler, filters)
 
     from . import perfis as mod_perfis
     from .etapas import PERFIL_PADRAO
@@ -200,6 +417,26 @@ def criar_app(cfg, con, db_path, perfis_dir: Path | None = None,
         perfil_padrao=PERFIL_PADRAO,
         perfis=mod_perfis.carregar_todos(perfis_dir) if perfis_dir.is_dir() else {},
     )
+    app.post_init = registrar_menu
     app.add_handler(CommandHandler("cortes", _cortes))
+    app.add_handler(CommandHandler(["start", "ajuda", "help"], _ajuda))
+    app.add_handler(CommandHandler("status", _status))
+    app.add_handler(CommandHandler("canais", _canais))
+    app.add_handler(CommandHandler("fila", _fila))
     app.add_handler(CallbackQueryHandler(_decisao))
+    # Por ultimo: so pega o que nenhum comando acima reconheceu.
+    app.add_handler(MessageHandler(filters.COMMAND, _desconhecido))
     return app
+
+
+async def registrar_menu(app) -> None:
+    """Preenche o menu de comandos do Telegram (o botao ao lado do campo)."""
+    from telegram import BotCommand
+
+    await app.bot.set_my_commands([
+        BotCommand("cortes", "cortes esperando sua decisão"),
+        BotCommand("status", "panorama da fábrica"),
+        BotCommand("canais", "canais monitorados"),
+        BotCommand("fila", "aprovados aguardando upload"),
+        BotCommand("ajuda", "como eu funciono"),
+    ])
