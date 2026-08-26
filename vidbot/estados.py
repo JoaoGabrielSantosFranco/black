@@ -32,7 +32,9 @@ TRANSICOES_JOB: dict[str, set[str]] = {
 }
 
 TRANSICOES_CORTE: dict[str, set[str]] = {
-    AGUARDANDO_APROVACAO: {APROVADO, REJEITADO, REFAZER},
+    # o corte nasce em AGUARDANDO_APROVACAO e so ganha `caminho` apos o
+    # render (Tarefa 12); ERRO_RENDER sai dai, nao de um estado "renderizando".
+    AGUARDANDO_APROVACAO: {APROVADO, REJEITADO, REFAZER, ERRO_RENDER},
     APROVADO: {PUBLICADO, ERRO_UPLOAD},
     ERRO_UPLOAD: {APROVADO, REJEITADO},
     REFAZER: {AGUARDANDO_APROVACAO, ERRO_RENDER},
