@@ -67,3 +67,43 @@ def test_obter_marca_legenda_do_autor_como_sem_tempo_por_palavra():
     conteudo = (FIX / "autor.vtt").read_text()
     t = captions.obter(info, baixar=lambda _url: conteudo, idiomas=["pt"])
     assert t.origem == "autor" and t.por_palavra is False
+
+
+def test_parse_json3_com_none_devolve_lista_vazia():
+    assert captions.parse_json3(None) == []
+
+
+def test_parse_json3_com_lista_devolve_lista_vazia():
+    assert captions.parse_json3([]) == []
+
+
+def test_parse_json3_com_int_devolve_lista_vazia():
+    assert captions.parse_json3(42) == []
+
+
+def test_obter_com_null_json_nao_levanta():
+    info = {"subtitles": {}, "automatic_captions": {"pt": [{"ext": "json3", "url": "u"}]}}
+    t = captions.obter(info, baixar=lambda _url: "null", idiomas=["pt"])
+    assert t is None
+
+
+def test_nao_seleciona_srv3():
+    info = {
+        "subtitles": {},
+        "automatic_captions": {"pt": [{"ext": "srv3", "url": "u-srv3"}]},
+    }
+    assert captions.escolher_faixa(info, ["pt"]) is None
+
+
+def test_prefixo_de_idioma_combina_com_pt_br():
+    info = {
+        "subtitles": {"pt-BR": [{"ext": "vtt", "url": "u-pt-br"}]},
+        "automatic_captions": {},
+    }
+    assert captions.escolher_faixa(info, ["pt"]) == ("u-pt-br", "autor", "pt-BR")
+
+
+def test_ultima_palavra_tem_fim_definido():
+    ps = captions.parse_json3(json.loads((FIX / "asr.json3.json").read_text()))
+    assert ps[-1].fim_s > 0
+    assert ps[-1].fim_s == ps[-1].inicio_s or ps[-1].fim_s > ps[-1].inicio_s

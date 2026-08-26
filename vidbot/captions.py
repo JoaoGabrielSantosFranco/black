@@ -37,6 +37,8 @@ class Transcricao:
 
 def parse_json3(dados: dict) -> list[Palavra]:
     """json3 do ASR: tStartMs por evento, tOffsetMs por palavra."""
+    if not isinstance(dados, dict):
+        return []
     brutas: list[Palavra] = []
     for ev in dados.get("events", []):
         base = ev.get("tStartMs", 0) / 1000.0
@@ -76,7 +78,7 @@ def parse_vtt(texto: str) -> list[Palavra]:
 
 
 def _melhor(faixas: list[dict]) -> str | None:
-    for ext in ("json3", "vtt", "srv3", "srt"):
+    for ext in ("json3", "vtt", "srt"):
         for f in faixas:
             if f.get("ext") == ext and f.get("url"):
                 return f["url"]
