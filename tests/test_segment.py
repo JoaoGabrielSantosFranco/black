@@ -29,7 +29,11 @@ def test_sobreposicao_pequena_mantem_os_dois():
 
 def test_respeita_o_limite_de_cortes():
     muitos = [_c(i * 100, i * 100 + 40, nota=i) for i in range(20)]
-    assert len(s.filtrar(muitos, max_cortes=5)) == 5
+    resultado = s.filtrar(muitos, max_cortes=5)
+    assert len(resultado) == 5
+    # Finding 3: must assert which candidates survive, not just count
+    # Highest scores (19, 18, 17, 16, 15) should be selected
+    assert sorted([c.nota for c in resultado], reverse=True) == [19, 18, 17, 16, 15]
 
 
 def test_ordena_por_nota_decrescente():
@@ -46,6 +50,21 @@ def test_ajusta_a_borda_para_o_inicio_da_palavra_mais_proxima():
 
 def test_ajuste_sem_palavras_nao_quebra():
     assert s.ajustar_bordas(_c(1.0, 2.0), []).inicio_s == 1.0
+
+
+def test_ajusta_borda_fim_quando_word_posterior_existe():
+    # Exposes Finding 1: fim_s should snap to the end of the word containing it,
+    # not stretch to a word after it.
+    palavras = [
+        Palavra("a", 10.0, 10.5),
+        Palavra("b", 10.5, 11.0),
+        Palavra("c", 40.0, 40.4),
+        Palavra("d", 41.0, 41.5),
+    ]
+    ajustado = s.ajustar_bordas(_c(10.3, 10.7), palavras)
+    # fim_s=10.7 falls inside word "b" (10.5-11.0), so should snap to 11.0
+    assert ajustado.inicio_s == 10.5
+    assert ajustado.fim_s == 11.0
 
 
 def test_coagir_grampeia_nota_e_ignora_item_sem_tempo():
@@ -82,3 +101,37 @@ def test_escolher_junta_as_janelas_e_filtra(monkeypatch):
 
     r = s.escolher(t, {"titulo": "Ep"}, cfg=None, perguntar=falso)
     assert len(r) == 1 and r[0].titulo == "a"
+
+
+def test_escolher_levanta_quando_todas_as_janelas_falham():
+    # Finding 2: when every window fails, should raise instead of returning []
+    palavras = [Palavra("x", i, i + 1) for i in range(200)]
+    t = Transcricao(palavras, "asr", "pt")
+
+    def sempre_falha(prompt, sistema, cfg, **kw):
+        raise RuntimeError("provider falhou")
+
+    try:
+        s.escolher(t, {"titulo": "Ep"}, cfg=None, perguntar=sempre_falha)
+        assert False, "deveria ter levantado RuntimeError"
+    except RuntimeError:
+        pass  # esperado
+
+
+def test_escolher_ignora_falha_de_janelas_individuais():
+    # Finding 2: when some windows fail, should still return results from successful ones
+    # Create long words to force multiple windows with default max_chars=12000
+    palavras = [Palavra("palavra" * 10, i * 2, i * 2 + 1) for i in range(1000)]
+    t = Transcricao(palavras, "asr", "pt")
+
+    chamadas = [0]
+
+    def falha_depois(prompt, sistema, cfg, **kw):
+        chamadas[0] += 1
+        if chamadas[0] == 1:
+            raise RuntimeError("primeira janela falhou")
+        return {"trechos": [{"inicio": 10, "fim": 50, "titulo": "ok", "gancho": "g", "nota": 80}]}
+
+    r = s.escolher(t, {"titulo": "Ep"}, cfg=None, perguntar=falha_depois)
+    # Primeira janela falha, segunda sucede e retorna um clip
+    assert len(r) == 1 and r[0].titulo == "ok"

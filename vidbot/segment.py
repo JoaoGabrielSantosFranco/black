@@ -6,10 +6,13 @@ basta: duracao, sobreposicao e bordas sao regra, nao opiniao.
 from __future__ import annotations
 
 import bisect
+import logging
 from dataclasses import dataclass, replace
 
 from . import llm, validate as v
 from .captions import Palavra, Transcricao
+
+log = logging.getLogger(__name__)
 
 SISTEMA = """Voce escolhe trechos de podcast que funcionam como video curto.
 Responda SOMENTE JSON: {"trechos": [{"inicio": s, "fim": s, "titulo": "...",
@@ -57,7 +60,8 @@ def ajustar_bordas(c: Candidato, palavras: list[Palavra]) -> Candidato:
         return c
     inicios = [p.inicio_s for p in palavras]
     i = min(bisect.bisect_left(inicios, c.inicio_s), len(palavras) - 1)
-    j = min(bisect.bisect_left(inicios, c.fim_s), len(palavras) - 1)
+    j = bisect.bisect_right(inicios, c.fim_s) - 1
+    j = max(0, min(j, len(palavras) - 1))
     return replace(c, inicio_s=palavras[i].inicio_s, fim_s=palavras[j].fim_s)
 
 
@@ -112,13 +116,21 @@ def escolher(t: Transcricao, meta: dict, cfg,
              perguntar=llm.perguntar_json, **opcoes) -> list[Candidato]:
     """Percorre as janelas, junta os candidatos e aplica o filtro."""
     brutos: list[Candidato] = []
-    for janela in janelas(t.palavras):
+    janelas_list = list(janelas(t.palavras))
+    falhas, ultima_erro = 0, None
+    for janela in janelas_list:
         prompt = (f"Episodio: {meta.get('titulo', '')}\n"
                   f"Transcricao (segundo entre colchetes):\n"
                   f"{_transcrever_janela(janela)}")
         try:
             brutos.extend(coagir(perguntar(prompt, SISTEMA, cfg)))
-        except Exception:  # noqa: BLE001 - uma janela ruim nao derruba o episodio
+        except Exception as e:  # noqa: BLE001 - uma janela ruim nao derruba o episodio
+            falhas += 1
+            ultima_erro = e
+            log.warning(f"janela falhou: {e}")
             continue
+    # Se todas as janelas falharam, e uma falha sistêmica, não 'sem clips'
+    if janelas_list and falhas == len(janelas_list):
+        raise RuntimeError("todas as janelas falharam") from ultima_erro
     ajustados = [ajustar_bordas(c, t.palavras) for c in brutos]
     return filtrar(ajustados, **opcoes)
