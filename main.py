@@ -53,23 +53,120 @@ def cmd_jobs(args) -> int:
         con.close()
 
 
-def cmd_run(args) -> int:
+PENDENTES = [e.NOVO, e.LEGENDA_OBTIDA, e.SEGMENTADO]
+
+
+def _perfis_dir() -> Path:
+    """Ancorado na raiz, nao no CWD: cron e systemd rodam de qualquer lugar."""
+    return config.RAIZ / "perfis"
+
+
+def _perfil_do_job(job):
     from vidbot import etapas, perfis as mod_perfis
 
+    todos = mod_perfis.carregar_todos(_perfis_dir()) if _perfis_dir().is_dir() else {}
+    return todos.get(job.perfil) or etapas.PERFIL_PADRAO
+
+
+def _avancar(con, cfg, job) -> str:
+    from vidbot import etapas
+
+    passos = etapas.montar(con, cfg, _perfil_do_job(job))
+    return pipeline.executar_job(con, job.id, passos, cfg.work_dir)
+
+
+def cmd_run(args) -> int:
     con = _con(args)
     try:
         cfg = config.carregar()
         job = (db.obter_job(con, args.job) if args.job
-               else db.proximo_job(con, [e.NOVO, e.LEGENDA_OBTIDA, e.SEGMENTADO]))
+               else db.proximo_job(con, PENDENTES))
         if job is None:
             print("nada a fazer")
             return 0
-        todos = mod_perfis.carregar_todos(Path("perfis"))
-        perfil = todos.get(job.perfil) or etapas.PERFIL_PADRAO
-        passos = etapas.montar(con, cfg, perfil)
-        final = pipeline.executar_job(con, job.id, passos, cfg.work_dir)
+        final = _avancar(con, cfg, job)
         print(f"job #{job.id} terminou em {final}")
         return 0 if final != e.ERRO else 1
+    finally:
+        con.close()
+
+
+def cmd_canais(args) -> int:
+    from vidbot import canais
+
+    con = _con(args)
+    try:
+        if args.acao == "add":
+            try:
+                cid = canais.cadastrar(con, args.url, args.perfil)
+            except ValueError as erro:
+                print(erro)
+                return 1
+            print(f"canal #{cid} monitorado com o perfil {args.perfil}")
+            return 0
+        if args.acao in {"on", "off"}:
+            ok = canais.definir_ativo(con, args.id, args.acao == "on")
+            print(f"canal #{args.id} {'ativado' if args.acao == 'on' else 'pausado'}"
+                  if ok else f"canal #{args.id} nao existe")
+            return 0 if ok else 1
+        if args.acao == "rm":
+            ok = canais.remover(con, args.id)
+            print(f"canal #{args.id} removido" if ok else f"canal #{args.id} nao existe")
+            return 0 if ok else 1
+
+        registrados = canais.listar(con)
+        if not registrados:
+            print("nenhum canal monitorado — use: canais add <url|@handle> -p <perfil>")
+            return 0
+        for c in registrados:
+            marca = "ativo " if c.ativo else "pausado"
+            visto = c.visto_em or "nunca"
+            print(f"#{c.id:>3} {marca} {c.perfil:<12} {c.nome:<24} visto: {visto}")
+        return 0
+    finally:
+        con.close()
+
+
+def cmd_descobrir(args) -> int:
+    """Passo 2 da fabrica: procura videos novos nos canais monitorados."""
+    from vidbot import canais
+
+    con = _con(args)
+    try:
+        novos = canais.descobrir(con, limite=args.limite)
+        if not novos:
+            print("nenhum video novo")
+            return 0
+        for job in novos:
+            print(f"job #{job.id} criado: {job.titulo or job.video_id} ({job.perfil})")
+        return 0
+    finally:
+        con.close()
+
+
+def cmd_ciclo(args) -> int:
+    """A fabrica inteira, para pendurar no cron.
+
+    descobrir videos novos -> avancar todos os jobs pendentes -> subir a fila.
+    """
+    from vidbot import canais
+
+    con = _con(args)
+    try:
+        cfg = config.carregar()
+        novos = canais.descobrir(con, limite=args.limite)
+        print(f"descoberta: {len(novos)} video(s) novo(s)")
+
+        # O teto evita laco infinito se um job voltar pendente por um bug.
+        for _ in range(args.max_jobs):
+            job = db.proximo_job(con, PENDENTES)
+            if job is None:
+                break
+            final = _avancar(con, cfg, job)
+            print(f"job #{job.id}: {final}")
+        else:
+            print(f"parei em {args.max_jobs} jobs neste ciclo")
+        return cmd_publicar(args)
     finally:
         con.close()
 
@@ -116,7 +213,8 @@ def cmd_publicar(args) -> int:
         if not fila:
             print("nenhum corte aprovado esperando upload")
             return 0
-        todos = mod_perfis.carregar_todos(config.RAIZ / "perfis")
+        todos = (mod_perfis.carregar_todos(_perfis_dir())
+                 if _perfis_dir().is_dir() else {})
         tokens_dir = config.RAIZ / "tokens"
         for posicao, corte in enumerate(fila):
             if not yt.tem_quota(con, yt.hoje()):
@@ -174,11 +272,31 @@ def main(argv=None) -> int:
     sub.add_parser("bot", help="sobe o bot do Telegram para aprovar/publicar cortes")
     sub.add_parser("publicar", help="sobe os cortes aprovados que ficaram sem cota")
 
+    p_can = sub.add_parser("canais", help="cadastra e lista os canais monitorados")
+    can_sub = p_can.add_subparsers(dest="acao")
+    p_add = can_sub.add_parser("add", help="passa a monitorar um canal")
+    p_add.add_argument("url", help="@handle ou link do canal")
+    p_add.add_argument("-p", "--perfil", required=True)
+    for acao, ajuda in (("rm", "para de monitorar"), ("on", "retoma"), ("off", "pausa")):
+        p_a = can_sub.add_parser(acao, help=ajuda)
+        p_a.add_argument("id", type=int)
+
+    p_desc = sub.add_parser("descobrir", help="procura videos novos nos canais")
+    p_desc.add_argument("--limite", type=int, default=10,
+                        help="quantos uploads recentes olhar por canal")
+
+    p_ciclo = sub.add_parser(
+        "ciclo", help="descobre, processa e publica — o comando para o cron")
+    p_ciclo.add_argument("--limite", type=int, default=10)
+    p_ciclo.add_argument("--max-jobs", type=int, default=20, dest="max_jobs",
+                         help="teto de jobs processados neste ciclo")
+
     args = parser.parse_args(argv)
     return {
         "doctor": cmd_doctor, "ingest": cmd_ingest, "jobs": cmd_jobs,
         "run": cmd_run, "limpar": cmd_limpar, "bot": cmd_bot,
-        "publicar": cmd_publicar,
+        "publicar": cmd_publicar, "canais": cmd_canais,
+        "descobrir": cmd_descobrir, "ciclo": cmd_ciclo,
     }[args.cmd](args)
 
 

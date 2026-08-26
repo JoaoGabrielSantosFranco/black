@@ -99,3 +99,42 @@ def test_falha_num_corte_nao_derruba_os_outros(con, tmp_path):
     estados_finais = {c.id: c.estado for c in db.cortes_do_job(con, job.id)}
     assert estados_finais[bons[0]] == e.ERRO_RENDER
     assert estados_finais[bons[1]] == e.AGUARDANDO_APROVACAO
+
+
+def _perfil(**kw):
+    from vidbot import perfis
+    return perfis.Perfil(nome="p", **kw)
+
+
+def test_auto_publicar_deixa_o_corte_aprovado_direto(con, tmp_path):
+    """Sem revisao humana o corte ja sai pronto para o dreno de upload."""
+    job = _job(con)
+    cid = db.criar_corte(con, job.id, 0, 40, "a", 90)
+    etapa = etapas.fazer_renderizar(
+        con=con, perfil=_perfil(auto_publicar=True),
+        render_corte=lambda c, w, p, t, u: tmp_path / f"corte_{c.id}.mp4")
+    etapa(job, tmp_path)
+    assert db.obter_corte(con, cid).estado == e.APROVADO
+
+
+def test_sem_auto_publicar_o_corte_espera_aprovacao(con, tmp_path):
+    job = _job(con)
+    cid = db.criar_corte(con, job.id, 0, 40, "a", 90)
+    etapa = etapas.fazer_renderizar(
+        con=con, perfil=_perfil(auto_publicar=False),
+        render_corte=lambda c, w, p, t, u: tmp_path / f"corte_{c.id}.mp4")
+    etapa(job, tmp_path)
+    assert db.obter_corte(con, cid).estado == e.AGUARDANDO_APROVACAO
+
+
+def test_auto_publicar_nao_aprova_corte_que_falhou_no_render(con, tmp_path):
+    job = _job(con)
+    cid = db.criar_corte(con, job.id, 0, 40, "a", 90)
+
+    def quebra(c, w, p, t, u):
+        raise RuntimeError("ffmpeg codigo 1")
+
+    etapa = etapas.fazer_renderizar(
+        con=con, perfil=_perfil(auto_publicar=True), render_corte=quebra)
+    etapa(job, tmp_path)
+    assert db.obter_corte(con, cid).estado == e.ERRO_RENDER

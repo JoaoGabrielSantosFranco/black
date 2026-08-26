@@ -14,13 +14,25 @@ from .captions import Palavra, Transcricao
 
 log = logging.getLogger(__name__)
 
-SISTEMA = """Voce escolhe trechos de podcast que funcionam como video curto.
+SISTEMA = """Voce escolhe trechos de video que funcionam sozinhos como Short.
 Responda SOMENTE JSON: {"trechos": [{"inicio": s, "fim": s, "titulo": "...",
-"gancho": "primeira frase", "nota": 0-100, "motivo": "..."}]}
+"descricao": "...", "gancho": "primeira frase", "nota": 0-100, "motivo": "..."}]}
 
-Um bom trecho: e uma ideia autocontida, entendida sem o resto do episodio;
+Um bom trecho: e uma ideia autocontida, entendida sem o resto do video;
 tem comeco e fim naturais; prende nos 3 primeiros segundos; dura 20 a 90s.
+
+titulo: chamativo, ate 90 caracteres, no idioma da transcricao.
+descricao: 1 ou 2 frases que despertam curiosidade sem entregar o desfecho.
+nota: o quanto voce aposta que esse trecho performa (0-100).
+
 Use os tempos exatos da transcricao. Nao invente falas."""
+
+
+def montar_sistema(criterios: str = "") -> str:
+    """Prompt base mais os criterios do perfil daquele canal, quando houver."""
+    if not criterios:
+        return SISTEMA
+    return f"{SISTEMA}\n\nCriterios especificos deste canal:\n{criterios}"
 
 
 @dataclass
@@ -30,6 +42,7 @@ class Candidato:
     titulo: str
     gancho: str
     nota: int
+    descricao: str = ""
 
     @property
     def duracao_s(self) -> float:
@@ -50,6 +63,7 @@ def coagir(bruto: dict) -> list[Candidato]:
             v.texto(item.get("titulo"), "sem titulo", 95),
             v.texto(item.get("gancho"), "", 200),
             v.numero(item.get("nota"), 0, 100, 50),
+            v.texto(item.get("descricao"), "", 900),
         ))
     return saida
 
@@ -113,17 +127,18 @@ def _transcrever_janela(janela: list[Palavra]) -> str:
 
 
 def escolher(t: Transcricao, meta: dict, cfg,
-             perguntar=llm.perguntar_json, **opcoes) -> list[Candidato]:
+             perguntar=llm.perguntar_json, criterios: str = "", **opcoes) -> list[Candidato]:
     """Percorre as janelas, junta os candidatos e aplica o filtro."""
     brutos: list[Candidato] = []
     janelas_list = list(janelas(t.palavras))
+    sistema = montar_sistema(criterios)
     falhas, ultima_erro = 0, None
     for janela in janelas_list:
-        prompt = (f"Episodio: {meta.get('titulo', '')}\n"
+        prompt = (f"Video: {meta.get('titulo', '')}\n"
                   f"Transcricao (segundo entre colchetes):\n"
                   f"{_transcrever_janela(janela)}")
         try:
-            brutos.extend(coagir(perguntar(prompt, SISTEMA, cfg)))
+            brutos.extend(coagir(perguntar(prompt, sistema, cfg)))
         except Exception as e:  # noqa: BLE001 - uma janela ruim nao derruba o episodio
             falhas += 1
             ultima_erro = e

@@ -68,3 +68,21 @@ def test_carregar_todos_alerta_sobre_nomes_duplicados(tmp_path, caplog):
     assert "duplicado" in resultado
     assert len(caplog.records) > 0
     assert "Perfil duplicado" in caplog.text
+
+
+def test_auto_publicar_e_desligado_por_padrao(tmp_path):
+    arq = tmp_path / "p.yaml"
+    arq.write_text("nome: p\n", encoding="utf-8")
+    assert perfis.carregar(arq).auto_publicar is False
+
+
+def test_auto_publicar_liga_pelo_yaml(tmp_path):
+    arq = tmp_path / "p.yaml"
+    arq.write_text("nome: p\nauto_publicar: true\n", encoding="utf-8")
+    assert perfis.carregar(arq).auto_publicar is True
+
+
+def test_criterios_do_canal_sao_lidos(tmp_path):
+    arq = tmp_path / "p.yaml"
+    arq.write_text("nome: p\ncriterios: so momentos engracados\n", encoding="utf-8")
+    assert perfis.carregar(arq).criterios == "so momentos engracados"

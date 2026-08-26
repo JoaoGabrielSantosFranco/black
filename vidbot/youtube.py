@@ -36,7 +36,8 @@ def tem_quota(con, dia: str) -> bool:
 
 
 def montar_descricao(perfil, meta: dict, corte) -> str:
-    partes = [corte.titulo]
+    # A descricao do modelo e o corpo; o titulo so entra quando ela falta.
+    partes = [getattr(corte, "descricao", "") or corte.titulo]
     if perfil.creditar_origem:
         partes.append(
             f"\nTrecho do episodio original de {meta.get('canal', '')}:\n"

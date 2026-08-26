@@ -65,12 +65,14 @@ def fazer_selecionar(con, escolher=segment.escolher, cfg=None,
         meta = json.loads((Path(workdir) / "meta.json").read_text(encoding="utf-8")) \
             if (Path(workdir) / "meta.json").exists() else {"titulo": job.titulo}
         candidatos = escolher(transcricao, meta, cfg,
+                              criterios=perfil.criterios,
                               min_s=perfil.min_s, max_s=perfil.max_s,
                               max_cortes=perfil.max_cortes)
         if not candidatos:
             raise pipeline.PulaPara(e.SEM_CORTES)
         for c in candidatos:
-            db.criar_corte(con, job.id, c.inicio_s, c.fim_s, c.titulo, c.nota)
+            db.criar_corte(con, job.id, c.inicio_s, c.fim_s, c.titulo, c.nota,
+                           descricao=c.descricao)
 
     return etapa
 
@@ -108,6 +110,11 @@ def fazer_renderizar(con, render_corte=_render_corte_real,
             try:
                 saida = render_corte(corte, workdir, perfil, transcricao, job.url)
                 db.definir_caminho_corte(con, corte.id, str(saida))
+                if perfil.auto_publicar:
+                    # Canal sem revisao humana: o corte ja entra na fila de
+                    # upload. So aqui, depois do render dar certo.
+                    db.transicionar_corte(con, corte.id, e.AGUARDANDO_APROVACAO,
+                                          e.APROVADO)
             except Exception as erro:  # noqa: BLE001 - isolar o corte
                 log.warning("corte %s falhou: %s", corte.id, erro)
                 db.transicionar_corte(con, corte.id, e.AGUARDANDO_APROVACAO,

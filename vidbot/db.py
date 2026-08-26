@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS cortes (
     inicio_s   REAL NOT NULL,
     fim_s      REAL NOT NULL,
     titulo     TEXT NOT NULL DEFAULT '',
+    descricao  TEXT NOT NULL DEFAULT '',
     nota       INTEGER NOT NULL DEFAULT 0,
     estado     TEXT NOT NULL,
     caminho    TEXT,
@@ -39,7 +40,17 @@ CREATE TABLE IF NOT EXISTS uploads (
     youtube_id TEXT NOT NULL,
     dia      TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS canais (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    url           TEXT NOT NULL UNIQUE,
+    nome          TEXT NOT NULL DEFAULT '',
+    perfil        TEXT NOT NULL,
+    ativo         INTEGER NOT NULL DEFAULT 1,
+    visto_em      TEXT,
+    criado_em     TEXT NOT NULL DEFAULT (datetime('now'))
+);
 CREATE INDEX IF NOT EXISTS ix_jobs_estado ON jobs(estado);
+CREATE INDEX IF NOT EXISTS ix_jobs_video ON jobs(video_id);
 CREATE INDEX IF NOT EXISTS ix_cortes_job ON cortes(job_id);
 CREATE INDEX IF NOT EXISTS ix_uploads_dia ON uploads(dia);
 """
@@ -75,10 +86,25 @@ class Corte:
     caminho: str | None
     youtube_id: str | None
     erro: str | None
+    descricao: str = ""
 
     @property
     def duracao_s(self) -> float:
         return self.fim_s - self.inicio_s
+
+
+# Colunas acrescentadas depois que bancos ja existiam em producao.
+# `CREATE TABLE IF NOT EXISTS` nao altera tabela antiga, entao vao aqui.
+MIGRACOES: tuple[tuple[str, str, str], ...] = (
+    ("cortes", "descricao", "TEXT NOT NULL DEFAULT ''"),
+)
+
+
+def _migrar(con: sqlite3.Connection) -> None:
+    for tabela, coluna, tipo in MIGRACOES:
+        existentes = {r["name"] for r in con.execute(f"PRAGMA table_info({tabela})")}
+        if existentes and coluna not in existentes:
+            con.execute(f"ALTER TABLE {tabela} ADD COLUMN {coluna} {tipo}")
 
 
 def conectar(caminho: Path) -> sqlite3.Connection:
@@ -88,6 +114,7 @@ def conectar(caminho: Path) -> sqlite3.Connection:
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA foreign_keys=ON")
     con.executescript(SCHEMA)
+    _migrar(con)
     return con
 
 
@@ -137,11 +164,12 @@ def transicionar_job(con, job_id: int, de: str, para: str, erro: str | None = No
 
 # ---------------------------------------------------------------- cortes
 
-def criar_corte(con, job_id, inicio_s, fim_s, titulo, nota) -> int:
+def criar_corte(con, job_id, inicio_s, fim_s, titulo, nota, descricao: str = "") -> int:
     cur = con.execute(
-        "INSERT INTO cortes (job_id, inicio_s, fim_s, titulo, nota, estado)"
-        " VALUES (?,?,?,?,?,?)",
-        (job_id, float(inicio_s), float(fim_s), titulo, int(nota), e.AGUARDANDO_APROVACAO),
+        "INSERT INTO cortes (job_id, inicio_s, fim_s, titulo, descricao, nota, estado)"
+        " VALUES (?,?,?,?,?,?,?)",
+        (job_id, float(inicio_s), float(fim_s), titulo, descricao, int(nota),
+         e.AGUARDANDO_APROVACAO),
     )
     return cur.lastrowid
 
@@ -223,4 +251,5 @@ def _job(r) -> Job:
 
 def _corte(r) -> Corte:
     return Corte(r["id"], r["job_id"], r["inicio_s"], r["fim_s"], r["titulo"],
-                 r["nota"], r["estado"], r["caminho"], r["youtube_id"], r["erro"])
+                 r["nota"], r["estado"], r["caminho"], r["youtube_id"], r["erro"],
+                 r["descricao"])

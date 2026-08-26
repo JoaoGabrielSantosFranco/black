@@ -166,3 +166,41 @@ def test_listar_cortes_pendentes_ignora_corte_ainda_nao_renderizado(con):
     renderizado = db.criar_corte(con, jid, 40.0, 70.0, "com arquivo", 80)
     db.definir_caminho_corte(con, renderizado, "/w/2.mp4")
     assert [c.id for c in db.listar_cortes_pendentes(con)] == [renderizado]
+
+
+def test_corte_guarda_a_descricao(con):
+    jid = _job(con)
+    cid = db.criar_corte(con, jid, 0.0, 40.0, "t", 90, descricao="uma descricao")
+    assert db.obter_corte(con, cid).descricao == "uma descricao"
+
+
+def test_banco_antigo_sem_a_coluna_e_migrado(tmp_path):
+    """Quem ja rodava antes do campo existir nao pode perder o banco."""
+    import sqlite3
+
+    caminho = tmp_path / "antigo.sqlite3"
+    antigo = sqlite3.connect(caminho)
+    antigo.executescript("""
+        CREATE TABLE jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, url TEXT NOT NULL,
+            video_id TEXT NOT NULL, titulo TEXT NOT NULL DEFAULT '',
+            canal_origem TEXT NOT NULL DEFAULT '', duracao_s INTEGER NOT NULL DEFAULT 0,
+            perfil TEXT NOT NULL, estado TEXT NOT NULL, erro TEXT,
+            criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+            atualizado_em TEXT NOT NULL DEFAULT (datetime('now')));
+        CREATE TABLE cortes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL,
+            inicio_s REAL NOT NULL, fim_s REAL NOT NULL,
+            titulo TEXT NOT NULL DEFAULT '', nota INTEGER NOT NULL DEFAULT 0,
+            estado TEXT NOT NULL, caminho TEXT, youtube_id TEXT, erro TEXT);
+        INSERT INTO jobs (url, video_id, perfil, estado) VALUES ('u','A','p','NOVO');
+        INSERT INTO cortes (job_id, inicio_s, fim_s, titulo, nota, estado)
+            VALUES (1, 0, 40, 'antigo', 90, 'AGUARDANDO_APROVACAO');
+    """)
+    antigo.commit()
+    antigo.close()
+
+    con = db.conectar(caminho)
+    corte = db.obter_corte(con, 1)
+    assert corte.titulo == "antigo" and corte.descricao == ""
+    con.close()

@@ -73,3 +73,52 @@ def test_publicar_para_quando_a_cota_acaba(tmp_path, capsys):
     code = main.main(_argv(tmp_path, "publicar"))
     assert code == 0
     assert "cota do dia esgotada" in capsys.readouterr().out
+
+
+# ------------------------------------------------- canais e ciclo
+
+def test_canais_sem_nada_ensina_o_comando(tmp_path, capsys):
+    code = main.main(_argv(tmp_path, "canais"))
+    assert code == 0
+    assert "nenhum canal monitorado" in capsys.readouterr().out
+
+
+def test_canais_add_cadastra_e_lista(tmp_path, capsys):
+    assert main.main(_argv(tmp_path, "canais", "add", "@leon", "-p", "cortes_br")) == 0
+    capsys.readouterr()
+    main.main(_argv(tmp_path, "canais"))
+    saida = capsys.readouterr().out
+    assert "#  1" in saida and "cortes_br" in saida and "ativo" in saida
+
+
+def test_canais_add_recusa_link_que_nao_e_canal(tmp_path, capsys):
+    code = main.main(_argv(tmp_path, "canais", "add", "https://vimeo.com/1", "-p", "p"))
+    assert code == 1
+    assert "nao reconheci" in capsys.readouterr().out
+
+
+def test_canais_off_pausa_o_monitoramento(tmp_path, capsys):
+    main.main(_argv(tmp_path, "canais", "add", "@leon", "-p", "cortes_br"))
+    assert main.main(_argv(tmp_path, "canais", "off", "1")) == 0
+    capsys.readouterr()
+    main.main(_argv(tmp_path, "canais"))
+    assert "pausado" in capsys.readouterr().out
+
+
+def test_canais_rm_de_id_inexistente_falha(tmp_path, capsys):
+    code = main.main(_argv(tmp_path, "canais", "rm", "42"))
+    assert code == 1
+    assert "nao existe" in capsys.readouterr().out
+
+
+def test_descobrir_sem_canais_nao_faz_nada(tmp_path, capsys):
+    code = main.main(_argv(tmp_path, "descobrir"))
+    assert code == 0
+    assert "nenhum video novo" in capsys.readouterr().out
+
+
+def test_ciclo_roda_as_tres_fases_sem_canais(tmp_path, capsys):
+    code = main.main(_argv(tmp_path, "ciclo"))
+    assert code == 0
+    saida = capsys.readouterr().out
+    assert "descoberta: 0" in saida and "nenhum corte aprovado" in saida

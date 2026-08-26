@@ -135,3 +135,41 @@ def test_escolher_ignora_falha_de_janelas_individuais():
     r = s.escolher(t, {"titulo": "Ep"}, cfg=None, perguntar=falha_depois)
     # Primeira janela falha, segunda sucede e retorna um clip
     assert len(r) == 1 and r[0].titulo == "ok"
+
+
+def test_coagir_le_a_descricao_do_modelo():
+    bruto = {"trechos": [{"inicio": 10, "fim": 50, "titulo": "t", "gancho": "g",
+                          "nota": 80, "descricao": "Leon tenta uma estrategia inesperada"}]}
+    assert s.coagir(bruto)[0].descricao == "Leon tenta uma estrategia inesperada"
+
+
+def test_coagir_sem_descricao_nao_quebra():
+    bruto = {"trechos": [{"inicio": 10, "fim": 50, "titulo": "t", "gancho": "g", "nota": 80}]}
+    assert s.coagir(bruto)[0].descricao == ""
+
+
+def test_prompt_pede_descricao():
+    assert "descricao" in s.SISTEMA
+
+
+def test_criterios_do_perfil_entram_no_prompt():
+    sistema = s.montar_sistema("so momentos de humor, nada de tutorial")
+    assert "so momentos de humor" in sistema and "SOMENTE JSON" in sistema
+
+
+def test_sem_criterios_o_prompt_fica_o_base():
+    assert s.montar_sistema("") == s.SISTEMA
+
+
+def test_escolher_repassa_os_criterios_ao_modelo():
+    from vidbot.captions import Palavra, Transcricao
+
+    vistos = []
+
+    def falso(prompt, sistema, cfg):
+        vistos.append(sistema)
+        return {"trechos": [{"inicio": 10, "fim": 50, "titulo": "a", "gancho": "g", "nota": 80}]}
+
+    t = Transcricao([Palavra(f"p{i}", i, i + 1) for i in range(50)], "asr", "pt")
+    s.escolher(t, {"titulo": "Ep"}, cfg=None, perguntar=falso, criterios="foco em briga")
+    assert vistos and "foco em briga" in vistos[0]

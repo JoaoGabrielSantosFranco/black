@@ -6,6 +6,12 @@ min_s: 20
 max_s: 90
 privacidade: unlisted
 creditar_origem: true
+# true = sobe sozinho depois do render; false = espera voce aprovar no Telegram
+auto_publicar: false
+# Instrucoes livres que entram no prompt da IA so para este canal.
+criterios: |
+  Prefira momentos de reacao forte, discordancia ou virada inesperada.
+  Evite trechos de introducao, agradecimento e leitura de patrocinio.
 cadencia: "0 9 * * *"
 idiomas: [pt, en]
 estilo:

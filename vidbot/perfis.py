@@ -26,6 +26,8 @@ class Perfil:
     max_s: float = 90.0
     privacidade: str = "unlisted"
     creditar_origem: bool = True
+    auto_publicar: bool = False
+    criterios: str = ""
     cadencia: str = ""
     idiomas: list[str] = field(default_factory=lambda: ["pt", "en"])
     estilo: dict = field(default_factory=dict)
@@ -60,6 +62,8 @@ def carregar(caminho: Path) -> Perfil:
         max_s=v.numero(dados.get("max_s"), 10, 180, 90, cast=float),
         privacidade=v.escolha(dados.get("privacidade"), PRIVACIDADES, "unlisted"),
         creditar_origem=v.flag(dados.get("creditar_origem"), True),
+        auto_publicar=v.flag(dados.get("auto_publicar"), False),
+        criterios=v.texto(dados.get("criterios"), "", 2000),
         cadencia=v.texto(dados.get("cadencia"), "", 40),
         idiomas=[str(i)[:5] for i in idiomas] if isinstance(idiomas, list) and idiomas
                 else ["pt", "en"],
