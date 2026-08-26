@@ -74,6 +74,10 @@ def cmd_run(args) -> int:
         con.close()
 
 
+def _db_path(args) -> Path:
+    return Path(args.db) if args.db else config.carregar().db_path
+
+
 def cmd_bot(args) -> int:
     """Sobe o bot do Telegram (polling) para aprovar e publicar cortes."""
     from vidbot import bot
@@ -85,11 +89,45 @@ def cmd_bot(args) -> int:
     if not cfg.telegram_ids:
         print("TELEGRAM_ALLOWED_USER_IDS nao configurado no .env — ninguem poderia usar o bot")
         return 1
-    con = _con(args)
+    caminho = _db_path(args)
+    con = db.conectar(caminho)
     try:
-        app = bot.criar_app(cfg, con)
+        app = bot.criar_app(cfg, con, caminho)
         print("bot no ar — /cortes lista os pendentes de aprovacao")
         app.run_polling()
+        return 0
+    finally:
+        con.close()
+
+
+def cmd_publicar(args) -> int:
+    """Drena a fila de cortes aprovados que ainda nao subiram.
+
+    E o que torna verdadeira a promessa do bot quando a cota do dia acaba:
+    sem isto, todo corte aprovado depois do limite diario ficaria parado
+    para sempre.
+    """
+    from vidbot import bot, etapas, perfis as mod_perfis, youtube as yt
+
+    con = _con(args)
+    try:
+        cfg = config.carregar()
+        fila = db.listar_cortes_aprovados(con)
+        if not fila:
+            print("nenhum corte aprovado esperando upload")
+            return 0
+        todos = mod_perfis.carregar_todos(config.RAIZ / "perfis")
+        tokens_dir = config.RAIZ / "tokens"
+        for posicao, corte in enumerate(fila):
+            if not yt.tem_quota(con, yt.hoje()):
+                print(f"cota do dia esgotada — {len(fila) - posicao} corte(s) ficam para amanha")
+                break
+            job = db.obter_job(con, corte.job_id)
+            perfil = todos.get(job.perfil) or etapas.PERFIL_PADRAO
+            servico = yt.servico_do_perfil(perfil, tokens_dir)
+            resultado = bot.publicar_ou_avisar(
+                con, corte, perfil, yt.meta_do_job(cfg, job), servico)
+            print(f"corte #{corte.id}: {resultado}")
         return 0
     finally:
         con.close()
@@ -134,11 +172,13 @@ def main(argv=None) -> int:
 
     sub.add_parser("limpar", help="apaga workdirs de jobs encerrados")
     sub.add_parser("bot", help="sobe o bot do Telegram para aprovar/publicar cortes")
+    sub.add_parser("publicar", help="sobe os cortes aprovados que ficaram sem cota")
 
     args = parser.parse_args(argv)
     return {
         "doctor": cmd_doctor, "ingest": cmd_ingest, "jobs": cmd_jobs,
         "run": cmd_run, "limpar": cmd_limpar, "bot": cmd_bot,
+        "publicar": cmd_publicar,
     }[args.cmd](args)
 
 

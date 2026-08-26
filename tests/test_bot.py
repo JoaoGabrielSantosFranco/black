@@ -121,3 +121,25 @@ def test_publicar_ou_avisar_sem_quota_avisa_e_mantem_aprovado(con):
                                    ServicoFalso())
     assert "cota" in texto
     assert db.obter_corte(con, corte.id).estado == e.APROVADO
+
+
+class ServicoQuebrado:
+    def inserir(self, corpo, caminho):
+        raise RuntimeError("HttpError 500: backend error")
+
+
+def test_falha_de_upload_vira_erro_upload_e_nao_escapa(con):
+    """Sem isso o corte fica presdo em APROVADO: retocar cai em JaDecidido
+    e nada nunca marca ERRO_UPLOAD."""
+    corte = _corte_aprovado(con)
+    texto = bot.publicar_ou_avisar(con, corte, perfis.Perfil(nome="p"), {"url_original": "u"},
+                                   ServicoQuebrado())
+    assert "falhou" in texto and "backend error" in texto
+    assert db.obter_corte(con, corte.id).estado == e.ERRO_UPLOAD
+
+
+def test_erro_de_upload_fica_gravado_no_corte(con):
+    corte = _corte_aprovado(con)
+    bot.publicar_ou_avisar(con, corte, perfis.Perfil(nome="p"), {"url_original": "u"},
+                           ServicoQuebrado())
+    assert "backend error" in db.obter_corte(con, corte.id).erro

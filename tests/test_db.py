@@ -109,24 +109,60 @@ def test_listar_jobs_respeita_limite(con):
     assert len(db.listar_jobs(con, limite=10)) == 5
 
 
+def _corte_renderizado(con, job_id, inicio=0.0, fim=30.0, titulo="t", nota=90):
+    cid = db.criar_corte(con, job_id, inicio, fim, titulo, nota)
+    db.definir_caminho_corte(con, cid, f"/w/{cid}.mp4")
+    return cid
+
+
 def test_listar_cortes_pendentes_ignora_outros_estados(con):
     jid = _job(con)
-    aprovado = db.criar_corte(con, jid, 0.0, 30.0, "aprovado", 90)
+    aprovado = _corte_renderizado(con, jid, 0.0, 30.0, "aprovado", 90)
     db.transicionar_corte(con, aprovado, e.AGUARDANDO_APROVACAO, e.APROVADO)
-    pendente = db.criar_corte(con, jid, 40.0, 70.0, "pendente", 80)
+    pendente = _corte_renderizado(con, jid, 40.0, 70.0, "pendente", 80)
     assert [c.id for c in db.listar_cortes_pendentes(con)] == [pendente]
 
 
 def test_listar_cortes_pendentes_atravessa_jobs_mais_recente_primeiro(con):
     j1 = _job(con)
     j2 = _job(con)
-    c1 = db.criar_corte(con, j1, 0.0, 30.0, "um", 90)
-    c2 = db.criar_corte(con, j2, 0.0, 30.0, "dois", 90)
+    c1 = _corte_renderizado(con, j1, 0.0, 30.0, "um", 90)
+    c2 = _corte_renderizado(con, j2, 0.0, 30.0, "dois", 90)
     assert [c.id for c in db.listar_cortes_pendentes(con)] == [c2, c1]
 
 
 def test_listar_cortes_pendentes_respeita_limite(con):
     jid = _job(con)
     for i in range(5):
-        db.criar_corte(con, jid, i * 10.0, i * 10.0 + 5.0, f"c{i}", 80)
+        cid = db.criar_corte(con, jid, i * 10.0, i * 10.0 + 5.0, f"c{i}", 80)
+        db.definir_caminho_corte(con, cid, f"/w/{cid}.mp4")
     assert len(db.listar_cortes_pendentes(con, limite=3)) == 3
+
+
+def test_listar_cortes_aprovados_traz_os_que_esperam_upload(con):
+    jid = _job(con)
+    aprovado = _corte_renderizado(con, jid, 0.0, 30.0, "aprovado", 90)
+    db.transicionar_corte(con, aprovado, e.AGUARDANDO_APROVACAO, e.APROVADO)
+    _corte_renderizado(con, jid, 40.0, 70.0, "pendente", 80)
+    assert [c.id for c in db.listar_cortes_aprovados(con)] == [aprovado]
+
+
+def test_listar_cortes_aprovados_ordena_do_mais_antigo(con):
+    """Fila de upload: quem esperou mais sobe primeiro."""
+    jid = _job(con)
+    ids = []
+    for i in range(3):
+        cid = _corte_renderizado(con, jid, i * 10.0, i * 10.0 + 5.0, f"c{i}", 80)
+        db.transicionar_corte(con, cid, e.AGUARDANDO_APROVACAO, e.APROVADO)
+        ids.append(cid)
+    assert [c.id for c in db.listar_cortes_aprovados(con)] == ids
+
+
+def test_listar_cortes_pendentes_ignora_corte_ainda_nao_renderizado(con):
+    """Corte nasce em AGUARDANDO_APROVACAO no `selecionar`, antes de existir
+    arquivo. Publicar isso subiria um caminho vazio para o YouTube."""
+    jid = _job(con)
+    db.criar_corte(con, jid, 0.0, 30.0, "sem arquivo", 90)
+    renderizado = db.criar_corte(con, jid, 40.0, 70.0, "com arquivo", 80)
+    db.definir_caminho_corte(con, renderizado, "/w/2.mp4")
+    assert [c.id for c in db.listar_cortes_pendentes(con)] == [renderizado]

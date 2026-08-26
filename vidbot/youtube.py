@@ -68,6 +68,26 @@ def publicar(con, corte, perfil, meta: dict, servico, dia: str | None = None) ->
     return video_id
 
 
+def meta_do_job(cfg, job) -> dict:
+    """Le o meta.json salvo por etapas.fazer_obter_legendas; cai pro job se faltar."""
+    import json
+
+    caminho = Path(cfg.work_dir) / str(job.id) / "meta.json"
+    if caminho.exists():
+        return json.loads(caminho.read_text(encoding="utf-8"))
+    return {"url_original": job.url, "canal": job.canal_origem}
+
+
+def servico_do_perfil(perfil, tokens_dir: Path):
+    """Cliente do canal do perfil, ou None se ainda nao ha token OAuth."""
+    if not perfil.canal_token:
+        return None
+    caminho = Path(tokens_dir) / perfil.canal_token
+    if not caminho.exists():
+        return None
+    return servico_real(caminho)
+
+
 def servico_real(token_path: Path):
     """Cliente autenticado da YouTube Data API. Nao usado em teste."""
     from google.auth.transport.requests import Request

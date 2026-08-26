@@ -50,3 +50,26 @@ def test_bot_sem_operadores_avisa_e_nao_sobe(tmp_path, capsys, monkeypatch):
     code = main.main(_argv(tmp_path, "bot"))
     assert code == 1
     assert "TELEGRAM_ALLOWED_USER_IDS" in capsys.readouterr().out
+
+
+def test_publicar_sem_fila_avisa(tmp_path, capsys):
+    code = main.main(_argv(tmp_path, "publicar"))
+    assert code == 0
+    assert "nenhum corte aprovado" in capsys.readouterr().out
+
+
+def test_publicar_para_quando_a_cota_acaba(tmp_path, capsys):
+    from vidbot import youtube as yt
+
+    con = db.conectar(tmp_path / "t.sqlite3")
+    jid = db.criar_job(con, "u", "A", "Ep", "@x", 600, "cortes_br")
+    cid = db.criar_corte(con, jid, 0.0, 40.0, "t", 90)
+    db.definir_caminho_corte(con, cid, str(tmp_path / "c.mp4"))
+    db.transicionar_corte(con, cid, e.AGUARDANDO_APROVACAO, e.APROVADO)
+    for i in range(6):
+        db.registrar_upload(con, cid, f"x{i}", yt.hoje())
+    con.close()
+
+    code = main.main(_argv(tmp_path, "publicar"))
+    assert code == 0
+    assert "cota do dia esgotada" in capsys.readouterr().out

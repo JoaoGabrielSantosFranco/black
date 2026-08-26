@@ -159,10 +159,29 @@ def cortes_do_job(con, job_id: int) -> list[Corte]:
 
 
 def listar_cortes_pendentes(con, limite: int = 20) -> list[Corte]:
-    """Cortes aguardando decisao humana, de qualquer job, mais recentes primeiro."""
+    """Cortes aguardando decisao humana, de qualquer job, mais recentes primeiro.
+
+    So os ja renderizados: o corte nasce em AGUARDANDO_APROVACAO no `selecionar`,
+    antes de existir arquivo, e publicar isso subiria um caminho vazio.
+    """
     rs = con.execute(
-        "SELECT * FROM cortes WHERE estado=? ORDER BY id DESC LIMIT ?",
+        "SELECT * FROM cortes WHERE estado=? AND caminho IS NOT NULL"
+        " ORDER BY id DESC LIMIT ?",
         (e.AGUARDANDO_APROVACAO, int(limite)),
+    ).fetchall()
+    return [_corte(r) for r in rs]
+
+
+def listar_cortes_aprovados(con, limite: int = 50) -> list[Corte]:
+    """Fila de upload: aprovados que ainda nao subiram, mais antigo primeiro.
+
+    Alimenta o dreno de quota — um corte aprovado num dia sem cota espera aqui
+    ate a proxima janela em vez de se perder.
+    """
+    rs = con.execute(
+        "SELECT * FROM cortes WHERE estado=? AND caminho IS NOT NULL"
+        " ORDER BY id ASC LIMIT ?",
+        (e.APROVADO, int(limite)),
     ).fetchall()
     return [_corte(r) for r in rs]
 
