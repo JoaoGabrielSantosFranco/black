@@ -103,7 +103,7 @@ def test_prefixo_de_idioma_combina_com_pt_br():
     assert captions.escolher_faixa(info, ["pt"]) == ("u-pt-br", "autor", "pt-BR")
 
 
-def test_ultima_palavra_tem_fim_definido():
+def test_ultima_palavra_fecha_no_fim_do_evento():
     ps = captions.parse_json3(json.loads((FIX / "asr.json3.json").read_text()))
-    assert ps[-1].fim_s > 0
-    assert ps[-1].fim_s == ps[-1].inicio_s or ps[-1].fim_s > ps[-1].inicio_s
+    assert ps[-1].texto == "me"
+    assert ps[-1].fim_s == 3.8
