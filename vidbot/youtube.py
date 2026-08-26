@@ -12,6 +12,8 @@ from . import db, estados as e
 
 QUOTA_DIARIA = 10000
 CUSTO_UPLOAD = 1600
+# Menor privilegio: sobe video e nada mais. Nao le, nao apaga, nao comenta.
+ESCOPOS = ["https://www.googleapis.com/auth/youtube.upload"]
 
 
 class SemQuota(RuntimeError):
@@ -79,14 +81,47 @@ def meta_do_job(cfg, job) -> dict:
     return {"url_original": job.url, "canal": job.canal_origem}
 
 
-def servico_do_perfil(perfil, tokens_dir: Path):
-    """Cliente do canal do perfil, ou None se ainda nao ha token OAuth."""
+def caminho_do_token(perfil, tokens_dir: Path) -> Path | None:
+    """Onde mora o token OAuth do canal deste perfil, se ele declara um."""
     if not perfil.canal_token:
         return None
-    caminho = Path(tokens_dir) / perfil.canal_token
-    if not caminho.exists():
+    return Path(tokens_dir) / perfil.canal_token
+
+
+def servico_do_perfil(perfil, tokens_dir: Path):
+    """Cliente do canal do perfil, ou None se ainda nao ha token OAuth."""
+    caminho = caminho_do_token(perfil, tokens_dir)
+    if caminho is None or not caminho.exists():
         return None
     return servico_real(caminho)
+
+
+def salvar_token(credenciais, destino: Path) -> Path:
+    """Grava o token so para o dono: ele carrega o refresh_token do canal,
+    que vale ate ser revogado."""
+    destino = Path(destino)
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    destino.write_text(credenciais.to_json(), encoding="utf-8")
+    destino.chmod(0o600)
+    return destino
+
+
+def autorizar(client_secrets: Path, destino: Path, porta: int = 0) -> Path:
+    """Roda o consentimento do Google e guarda o token do canal.
+
+    Precisa de navegador na maquina que executa: o fluxo "out-of-band"
+    (colar codigo no terminal) foi desligado pelo Google em 2022. Num
+    servidor sem tela, use encaminhamento de porta por SSH ou rode este
+    comando na sua maquina e copie o arquivo gerado.
+    """
+    from google_auth_oauthlib.flow import InstalledAppFlow
+
+    fluxo = InstalledAppFlow.from_client_secrets_file(str(client_secrets), ESCOPOS)
+    # access_type/prompt garantem que venha refresh_token: sem ele o acesso
+    # morre em uma hora e a fabrica para sozinha depois do primeiro upload.
+    credenciais = fluxo.run_local_server(
+        port=porta, access_type="offline", prompt="consent")
+    return salvar_token(credenciais, destino)
 
 
 def servico_real(token_path: Path):
@@ -96,10 +131,12 @@ def servico_real(token_path: Path):
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaFileUpload
 
-    cred = Credentials.from_authorized_user_file(
-        str(token_path), ["https://www.googleapis.com/auth/youtube.upload"])
+    cred = Credentials.from_authorized_user_file(str(token_path), ESCOPOS)
     if cred.expired and cred.refresh_token:
         cred.refresh(Request())
+        # Regrava: sem isto o access_token renovado se perde ao sair, e todo
+        # `publicar` gasta uma ida ao Google so para refazer o mesmo refresh.
+        salvar_token(cred, Path(token_path))
     api = build("youtube", "v3", credentials=cred, cache_discovery=False)
 
     class Servico:

@@ -56,3 +56,33 @@ def test_variavel_de_ambiente_ja_setada_vence_o_dotenv(tmp_path, monkeypatch):
     (tmp_path / ".env").write_text("GROQ_API_KEY=do-arquivo\n", encoding="utf-8")
     monkeypatch.setenv("GROQ_API_KEY", "do-ambiente")
     assert config.carregar().groq_api_key == "do-ambiente"
+
+
+def test_diagnostico_aponta_canal_sem_token(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "RAIZ", tmp_path)
+    perfis_dir = tmp_path / "perfis"
+    perfis_dir.mkdir()
+    (perfis_dir / "canal.yaml").write_text(
+        "nome: canal\ncanal_token: canal.json\n", encoding="utf-8")
+    cfg = config.carregar(_env())
+    linhas = dict((nome, ok) for nome, ok, _ in config.diagnosticar(cfg))
+    assert linhas["tokens de canal"] is False
+
+
+def test_diagnostico_aprova_quando_o_token_existe(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "RAIZ", tmp_path)
+    perfis_dir = tmp_path / "perfis"
+    perfis_dir.mkdir()
+    (perfis_dir / "canal.yaml").write_text(
+        "nome: canal\ncanal_token: canal.json\n", encoding="utf-8")
+    tokens = tmp_path / "tokens"
+    tokens.mkdir()
+    (tokens / "canal.json").write_text("{}", encoding="utf-8")
+    cfg = config.carregar(_env())
+    linhas = dict((nome, ok) for nome, ok, _ in config.diagnosticar(cfg))
+    assert linhas["tokens de canal"] is True
+
+
+def test_diagnostico_sem_perfis_nao_quebra(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "RAIZ", tmp_path)
+    assert config.diagnosticar(config.carregar(_env()))

@@ -59,15 +59,36 @@ def carregar(env: dict | None = None) -> Config:
     )
 
 
+def _tokens_de_canal() -> tuple[bool, str]:
+    """Quantos perfis ja tem token OAuth. Sem token o canal nunca publica."""
+    from . import perfis as mod_perfis
+
+    perfis_dir, tokens_dir = RAIZ / "perfis", RAIZ / "tokens"
+    if not perfis_dir.is_dir():
+        return False, f"nenhum perfil em {perfis_dir}"
+    todos = mod_perfis.carregar_todos(perfis_dir)
+    if not todos:
+        return False, f"nenhum perfil em {perfis_dir}"
+
+    faltando = [p.nome for p in todos.values()
+                if not p.canal_token or not (tokens_dir / p.canal_token).exists()]
+    if faltando:
+        return False, ("sem token: " + ", ".join(faltando)
+                       + " — rode `main.py autorizar <perfil>`")
+    return True, f"{len(todos)} canal(is) prontos para publicar"
+
+
 def diagnosticar(cfg: Config) -> list[tuple[str, bool, str]]:
     """Linhas (nome, ok, detalhe) para o comando doctor."""
     chave = cfg.groq_api_key if cfg.llm_provider == "groq" else cfg.gemini_api_key
     ffmpeg = shutil.which("ffmpeg")
     livre_gb = shutil.disk_usage(cfg.work_dir.parent).free / 1024**3
+    tokens_ok, tokens_detalhe = _tokens_de_canal()
     return [
         ("chave do LLM", bool(chave) or cfg.llm_provider == "ollama", cfg.llm_provider),
         ("ffmpeg", ffmpeg is not None, ffmpeg or "nao encontrado — sudo apt install ffmpeg"),
         ("token do Telegram", bool(cfg.telegram_token), "necessario para `main.py bot`"),
         ("operadores autorizados", bool(cfg.telegram_ids), f"{len(cfg.telegram_ids)} id(s)"),
+        ("tokens de canal", tokens_ok, tokens_detalhe),
         ("disco livre", livre_gb >= 3, f"{livre_gb:.1f} GB (minimo 3)"),
     ]

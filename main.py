@@ -231,6 +231,44 @@ def cmd_publicar(args) -> int:
         con.close()
 
 
+def cmd_autorizar(args) -> int:
+    """Gera o token OAuth do canal de um perfil (roda uma vez por canal)."""
+    from vidbot import perfis as mod_perfis, youtube as yt
+
+    todos = mod_perfis.carregar_todos(_perfis_dir()) if _perfis_dir().is_dir() else {}
+    perfil = todos.get(args.perfil)
+    if perfil is None:
+        print(f"perfil '{args.perfil}' nao encontrado em {_perfis_dir()}")
+        return 1
+
+    destino = yt.caminho_do_token(perfil, config.RAIZ / "tokens")
+    if destino is None:
+        print(f"o perfil '{args.perfil}' nao declara canal_token no YAML — "
+              f"defina, por exemplo, canal_token: {args.perfil}.json")
+        return 1
+    if destino.exists() and not args.forcar:
+        print(f"{destino} ja existe — use --forcar para autorizar de novo")
+        return 0
+
+    segredos = Path(args.client_secrets)
+    if not segredos.is_file():
+        print(f"nao achei o client_secrets em {segredos}\n"
+              "Baixe em console.cloud.google.com > APIs e Servicos > Credenciais\n"
+              "(tipo 'App para computador', com a YouTube Data API v3 ativada).")
+        return 1
+
+    print("Vou abrir o navegador para voce entrar na conta do canal.\n"
+          "Sem tela nesta maquina? Rode este comando no seu computador e copie\n"
+          f"o arquivo gerado para {destino}.\n")
+    try:
+        yt.autorizar(segredos, destino, porta=args.porta)
+    except Exception as erro:  # noqa: BLE001 - a mensagem do Google e o que importa
+        print(f"autorizacao falhou: {erro}")
+        return 1
+    print(f"token salvo em {destino} — o canal '{args.perfil}' ja pode publicar")
+    return 0
+
+
 def cmd_limpar(args) -> int:
     """Remove workdirs de jobs que ja terminaram."""
     import shutil
@@ -281,6 +319,16 @@ def main(argv=None) -> int:
         p_a = can_sub.add_parser(acao, help=ajuda)
         p_a.add_argument("id", type=int)
 
+    p_aut = sub.add_parser(
+        "autorizar", help="gera o token do YouTube para o canal de um perfil")
+    p_aut.add_argument("perfil")
+    p_aut.add_argument("--client-secrets", default="client_secrets.json",
+                       dest="client_secrets", help="json baixado do Google Cloud")
+    p_aut.add_argument("--porta", type=int, default=0,
+                       help="porta local do retorno OAuth (0 = qualquer livre)")
+    p_aut.add_argument("--forcar", action="store_true",
+                       help="reautoriza mesmo que ja exista token")
+
     p_desc = sub.add_parser("descobrir", help="procura videos novos nos canais")
     p_desc.add_argument("--limite", type=int, default=10,
                         help="quantos uploads recentes olhar por canal")
@@ -297,6 +345,7 @@ def main(argv=None) -> int:
         "run": cmd_run, "limpar": cmd_limpar, "bot": cmd_bot,
         "publicar": cmd_publicar, "canais": cmd_canais,
         "descobrir": cmd_descobrir, "ciclo": cmd_ciclo,
+        "autorizar": cmd_autorizar,
     }[args.cmd](args)
 
 

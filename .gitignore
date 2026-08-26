@@ -6,4 +6,9 @@ __pycache__/
 .pytest_cache/
 .env
 tokens/
+client_secrets.json
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+ciclo.log
 perfis/*.local.yaml

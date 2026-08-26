@@ -93,3 +93,31 @@ def test_privacidade_do_perfil_vai_no_corpo(con, corte):
                 servico, "2026-08-25")
     corpo, _ = servico.chamadas[0]
     assert corpo["status"]["privacyStatus"] == "public"
+
+
+# ------------------------------------------------- autorizacao OAuth
+
+def test_escopo_e_so_o_de_upload():
+    """Menor privilegio: o bot sobe video, nao le nem apaga nada."""
+    assert yt.ESCOPOS == ["https://www.googleapis.com/auth/youtube.upload"]
+
+
+def test_caminho_do_token_sai_do_perfil(tmp_path):
+    perfil = perfis.Perfil(nome="p", canal_token="cortes_br.json")
+    assert yt.caminho_do_token(perfil, tmp_path) == tmp_path / "cortes_br.json"
+
+
+def test_perfil_sem_canal_token_nao_tem_caminho(tmp_path):
+    assert yt.caminho_do_token(perfis.Perfil(nome="p"), tmp_path) is None
+
+
+def test_salvar_token_cria_o_diretorio_e_restringe_a_permissao(tmp_path):
+    class CredFalsa:
+        def to_json(self):
+            return '{"token": "abc"}'
+
+    destino = tmp_path / "tokens" / "canal.json"
+    yt.salvar_token(CredFalsa(), destino)
+    assert destino.read_text() == '{"token": "abc"}'
+    # o arquivo carrega refresh_token: ninguem mais na maquina deve ler
+    assert oct(destino.stat().st_mode)[-3:] == "600"

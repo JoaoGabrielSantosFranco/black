@@ -122,3 +122,58 @@ def test_ciclo_roda_as_tres_fases_sem_canais(tmp_path, capsys):
     assert code == 0
     saida = capsys.readouterr().out
     assert "descoberta: 0" in saida and "nenhum corte aprovado" in saida
+
+
+# ------------------------------------------------- autorizar
+
+def test_autorizar_perfil_inexistente_avisa(tmp_path, capsys):
+    code = main.main(_argv(tmp_path, "autorizar", "nao_existe"))
+    assert code == 1
+    assert "nao encontrado" in capsys.readouterr().out
+
+
+def test_autorizar_sem_client_secrets_ensina_onde_baixar(tmp_path, capsys, monkeypatch):
+    from vidbot import config, perfis
+
+    perfis_dir = tmp_path / "perfis"
+    perfis_dir.mkdir()
+    (perfis_dir / "canal.yaml").write_text(
+        "nome: canal\ncanal_token: canal.json\n", encoding="utf-8")
+    monkeypatch.setattr(config, "RAIZ", tmp_path)
+    assert perfis.carregar_todos(perfis_dir)["canal"].canal_token == "canal.json"
+
+    code = main.main(_argv(tmp_path, "autorizar", "canal",
+                           "--client-secrets", str(tmp_path / "sumiu.json")))
+    assert code == 1
+    saida = capsys.readouterr().out
+    assert "nao achei o client_secrets" in saida and "console.cloud.google.com" in saida
+
+
+def test_autorizar_nao_sobrescreve_token_existente(tmp_path, capsys, monkeypatch):
+    from vidbot import config
+
+    perfis_dir = tmp_path / "perfis"
+    perfis_dir.mkdir()
+    (perfis_dir / "canal.yaml").write_text(
+        "nome: canal\ncanal_token: canal.json\n", encoding="utf-8")
+    tokens = tmp_path / "tokens"
+    tokens.mkdir()
+    (tokens / "canal.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(config, "RAIZ", tmp_path)
+
+    code = main.main(_argv(tmp_path, "autorizar", "canal"))
+    assert code == 0
+    assert "--forcar" in capsys.readouterr().out
+
+
+def test_autorizar_recusa_perfil_sem_canal_token(tmp_path, capsys, monkeypatch):
+    from vidbot import config
+
+    perfis_dir = tmp_path / "perfis"
+    perfis_dir.mkdir()
+    (perfis_dir / "canal.yaml").write_text("nome: canal\n", encoding="utf-8")
+    monkeypatch.setattr(config, "RAIZ", tmp_path)
+
+    code = main.main(_argv(tmp_path, "autorizar", "canal"))
+    assert code == 1
+    assert "canal_token" in capsys.readouterr().out
