@@ -7,6 +7,7 @@ invalido ou um argumento perigoso de linha de comando.
 from __future__ import annotations
 
 import json
+import math
 import re
 
 HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
@@ -39,9 +40,12 @@ def extrair_json(texto: str) -> dict:
 
 def numero(valor, lo, hi, padrao, *, cast=int):
     try:
-        return cast(min(hi, max(lo, cast(float(valor)))))
+        bruto = float(valor)
     except (TypeError, ValueError):
         return cast(padrao)
+    if not math.isfinite(bruto):
+        return cast(padrao)
+    return cast(min(hi, max(lo, bruto)))
 
 
 def texto(valor, padrao: str = "", limite: int = 200) -> str:

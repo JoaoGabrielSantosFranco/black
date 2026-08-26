@@ -47,3 +47,38 @@ def test_cor_invalida_usa_o_padrao():
 def test_texto_e_truncado_e_limpo():
     assert v.texto("  oi  ", limite=10) == "oi"
     assert len(v.texto("x" * 500, limite=10)) == 10
+
+
+def test_numero_infinity_usa_padrao():
+    assert v.numero(float('inf'), 0, 100, 50) == 50
+    assert v.numero(float('-inf'), 0, 100, 50) == 50
+
+
+def test_numero_nan_usa_padrao():
+    assert v.numero(float('nan'), 0, 100, 50) == 50
+
+
+def test_extrair_json_com_infinity_no_campo():
+    dados = v.extrair_json('{"tamanho": Infinity}')
+    assert dados == {"tamanho": float('inf')}
+
+
+def test_numero_pode_processar_infinity_extraido_de_json():
+    dados = v.extrair_json('{"tamanho": Infinity}')
+    resultado = v.numero(dados["tamanho"], 0, 100, 50)
+    assert resultado == 50
+
+
+def test_extrair_json_rejeita_null():
+    with pytest.raises(v.SaidaInvalida):
+        v.extrair_json('null')
+
+
+def test_extrair_json_rejeita_array():
+    with pytest.raises(v.SaidaInvalida):
+        v.extrair_json('[]')
+
+
+def test_extrair_json_rejeita_numero():
+    with pytest.raises(v.SaidaInvalida):
+        v.extrair_json('42')
