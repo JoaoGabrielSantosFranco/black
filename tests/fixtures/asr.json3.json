@@ -1,0 +1,12 @@
+{"events": [
+  {"tStartMs": 1000, "dDurationMs": 1600, "segs": [
+    {"utf8": "o", "tOffsetMs": 0},
+    {"utf8": " erro", "tOffsetMs": 300},
+    {"utf8": " que", "tOffsetMs": 900}
+  ]},
+  {"tStartMs": 2600, "dDurationMs": 1200, "segs": [
+    {"utf8": " quase", "tOffsetMs": 0},
+    {"utf8": " me", "tOffsetMs": 500}
+  ]},
+  {"tStartMs": 4000, "dDurationMs": 500, "segs": [{"utf8": "\n"}]}
+]}
