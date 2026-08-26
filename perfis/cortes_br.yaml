@@ -1,0 +1,21 @@
+nome: cortes_br
+canal_token: cortes_br.json
+reenquadre: centro
+max_cortes: 12
+min_s: 20
+max_s: 90
+privacidade: unlisted
+creditar_origem: true
+cadencia: "0 9 * * *"
+idiomas: [pt, en]
+estilo:
+  fonte: DejaVu Sans
+  tamanho: 84
+  cor_texto: "#FFFFFF"
+  cor_destaque: "#FFD400"
+  cor_contorno: "#000000"
+  contorno: 5
+  posicao: centro
+  maiusculas: true
+  caixa: false
+  palavras_por_cue: 2
