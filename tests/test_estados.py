@@ -31,3 +31,7 @@ def test_corte_com_erro_de_upload_retenta():
 
 def test_corte_nao_publica_sem_passar_por_aprovado():
     assert not e.pode(e.TRANSICOES_CORTE, e.AGUARDANDO_APROVACAO, e.PUBLICADO)
+
+
+def test_corte_recem_criado_pode_falhar_no_render():
+    assert e.pode(e.TRANSICOES_CORTE, e.AGUARDANDO_APROVACAO, e.ERRO_RENDER)
