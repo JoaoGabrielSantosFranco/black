@@ -80,3 +80,69 @@ def test_estado_sem_passo_encerra_sem_erro(con, tmp_path):
     jid = _job(con)
     db.transicionar_job(con, jid, e.NOVO, e.LEGENDA_OBTIDA)
     assert pipeline.executar_job(con, jid, {}, tmp_path) == e.LEGENDA_OBTIDA
+
+
+def test_excecao_com_concorrencia_reavalua_ao_inves_de_retornar_estado_nao_escrito(con, tmp_path, tmp_path_factory):
+    """Quando outro processo muda o job antes do erro ser registrado, reavalua."""
+    jid = _job(con)
+
+    # Armazena se a etapa foi chamada
+    etapa_chamada = {"count": 0}
+
+    def explode(job, workdir):
+        etapa_chamada["count"] += 1
+        # Simula outro processo movendo o job ANTES da transição de erro
+        con2 = db.conectar(tmp_path_factory.mktemp("db2") / "t.sqlite3")
+        db.criar_job(con2, "https://y/w?v=A", "A", "Ep", "@x", 600, "p")  # cria estrutura
+        # Na verdade, precisamos usar a mesma conexão para simular concorrência
+        # A melhor forma é transicionar manualmente logo após o erro
+        raise RuntimeError("erro simulado")
+
+    # Para simular concorrência, vamos usar uma abordagem diferente:
+    # Criamos um passo que falha, e depois manualmente movemos o job
+    # DURANTE a execução usando um passo wrapper
+
+    def passo_com_race(job, workdir):
+        # Simula que outro processo moveu o job antes de registrarmos o erro
+        # Mudamos para LEGENDA_OBTIDA (fora do NOVO)
+        db.transicionar_job(con, jid, e.NOVO, e.LEGENDA_OBTIDA)
+        # Agora o passo falha
+        raise RuntimeError("erro após race")
+
+    # Passamos um passos dict que só tem NOVO
+    reg = []
+    final = pipeline.executar_job(
+        con, jid, {e.NOVO: pipeline.Passo(passo_com_race, e.LEGENDA_OBTIDA)}, tmp_path
+    )
+
+    # Como o job foi movido para LEGENDA_OBTIDA antes da exceção handler
+    # tentar fazer a transição, a transição falhará (False return)
+    # e o loop vai continuar. Como não há passo para LEGENDA_OBTIDA,
+    # o executar_job vai retornar LEGENDA_OBTIDA (não ERRO)
+    assert final == e.LEGENDA_OBTIDA
+    # E o job ainda deve estar em LEGENDA_OBTIDA, não em ERRO
+    assert db.obter_job(con, jid).estado == e.LEGENDA_OBTIDA
+
+
+def test_pula_para_com_concorrencia_reavalua_ao_inves_de_retornar_estado_nao_escrito(con, tmp_path, tmp_path_factory):
+    """Quando outro processo muda o job antes do PulaPara ser registrado, reavalua."""
+    jid = _job(con)
+
+    def pula_com_race(job, workdir):
+        # Simula que outro processo moveu o job antes de registrarmos o pulo
+        db.transicionar_job(con, jid, e.NOVO, e.LEGENDA_OBTIDA)
+        # Agora o passo pula
+        raise pipeline.PulaPara(e.SEM_LEGENDA)
+
+    # Passamos um passos dict que só tem NOVO
+    final = pipeline.executar_job(
+        con, jid, {e.NOVO: pipeline.Passo(pula_com_race, e.LEGENDA_OBTIDA)}, tmp_path
+    )
+
+    # Como o job foi movido para LEGENDA_OBTIDA antes do PulaPara handler
+    # tentar fazer a transição para SEM_LEGENDA, a transição falhará (False return)
+    # e o loop vai continuar. Como não há passo para LEGENDA_OBTIDA,
+    # o executar_job vai retornar LEGENDA_OBTIDA (não SEM_LEGENDA)
+    assert final == e.LEGENDA_OBTIDA
+    # E o job deve estar em LEGENDA_OBTIDA, não em SEM_LEGENDA
+    assert db.obter_job(con, jid).estado == e.LEGENDA_OBTIDA

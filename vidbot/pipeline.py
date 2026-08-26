@@ -48,10 +48,14 @@ def executar_job(con, job_id: int, passos: dict[str, Passo], raiz: Path) -> str:
         try:
             passo.etapa(job, workdir_de(raiz, job_id))
         except PulaPara as desvio:
-            db.transicionar_job(con, job_id, origem, desvio.estado)
+            if not db.transicionar_job(con, job_id, origem, desvio.estado):
+                # Outro processo mexeu no job. Reavalia do zero em vez de assumir.
+                continue
             return desvio.estado
         except Exception as erro:  # noqa: BLE001 - a mensagem vai para o banco
-            db.transicionar_job(con, job_id, origem, e.ERRO, erro=str(erro)[:500])
+            if not db.transicionar_job(con, job_id, origem, e.ERRO, erro=str(erro)[:500]):
+                # Outro processo mexeu no job. Reavalia do zero em vez de assumir.
+                continue
             return e.ERRO
 
         if not db.transicionar_job(con, job_id, origem, passo.proximo):
