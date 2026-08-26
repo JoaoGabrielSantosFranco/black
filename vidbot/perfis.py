@@ -1,12 +1,15 @@
 """Um YAML por canal de destino. Tudo validado na entrada."""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
 
 from . import validate as v
+
+logger = logging.getLogger(__name__)
 
 REENQUADRES = {"centro", "rosto"}  # `split` do spec §5 fica para depois
 PRIVACIDADES = {"private", "unlisted", "public"}
@@ -45,7 +48,8 @@ def _estilo(bruto) -> dict:
 
 
 def carregar(caminho: Path) -> Perfil:
-    dados = yaml.safe_load(Path(caminho).read_text(encoding="utf-8")) or {}
+    carregado = yaml.safe_load(Path(caminho).read_text(encoding="utf-8"))
+    dados = carregado if isinstance(carregado, dict) else {}
     idiomas = dados.get("idiomas")
     return Perfil(
         nome=v.texto(dados.get("nome"), Path(caminho).stem, 60),
@@ -67,5 +71,7 @@ def carregar_todos(diretorio: Path) -> dict[str, Perfil]:
     saida = {}
     for arq in sorted(Path(diretorio).glob("*.yaml")):
         p = carregar(arq)
+        if p.nome in saida:
+            logger.warning("Perfil duplicado %s em %s substituindo %s", p.nome, arq, None)
         saida[p.nome] = p
     return saida

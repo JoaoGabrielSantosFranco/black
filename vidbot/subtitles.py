@@ -11,6 +11,11 @@ from .perfis import POSICOES
 
 ALINHAMENTO = {"topo": 8, "centro": 5, "base": 2}
 
+
+def _campo_ass(valor: str) -> str:
+    """Um campo do cabecalho ASS nao pode conter virgula nem quebra de linha."""
+    return valor.replace(",", " ").replace("\n", " ").replace("\r", " ").strip()
+
 CABECALHO = """[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
@@ -58,8 +63,9 @@ def _linha(grupo: list[Palavra], maiusculas: bool, karaoke: bool) -> str:
 
 
 def gerar_ass(palavras: list[Palavra], estilo: dict, *, karaoke: bool) -> str:
+    fonte_validado = v.texto(estilo.get("fonte"), "DejaVu Sans", 60)
     cabecalho = CABECALHO.format(
-        fonte=v.texto(estilo.get("fonte"), "DejaVu Sans", 60),
+        fonte=_campo_ass(fonte_validado),
         tamanho=v.numero(estilo.get("tamanho"), 20, 130, 72),
         cor_texto=cor_ass(estilo.get("cor_texto")),
         cor_destaque=cor_ass(estilo.get("cor_destaque")),

@@ -55,3 +55,30 @@ def test_estilo_hostil_nao_quebra_o_arquivo():
 
 def test_tempo_formatado_no_padrao_ass():
     assert sub.tempo_ass(3661.25) == "1:01:01.25"
+
+
+def test_fonte_com_virgula_nao_quebra_campo():
+    estilo_ruim = dict(ESTILO, fonte="Evil,Font")
+    texto = sub.gerar_ass(_ps(), estilo_ruim, karaoke=True)
+    assert "[Script Info]" in texto
+    linhas_style = [l for l in texto.split("\n") if l.startswith("Style:")]
+    assert len(linhas_style) == 1
+    campos = linhas_style[0].split(",")
+    assert len(campos) == 17
+
+
+def test_fonte_com_quebra_de_linha_nao_quebra_arquivo():
+    estilo_ruim = dict(ESTILO, fonte="Evil\nFont")
+    texto = sub.gerar_ass(_ps(), estilo_ruim, karaoke=True)
+    assert "[Script Info]" in texto
+    assert texto.count("Style: P,") == 1
+    linhas_style = [l for l in texto.split("\n") if l.startswith("Style:")]
+    assert len(linhas_style) == 1
+
+
+def test_fonte_com_retorno_carro_nao_quebra_arquivo():
+    estilo_ruim = dict(ESTILO, fonte="Evil\rFont")
+    texto = sub.gerar_ass(_ps(), estilo_ruim, karaoke=True)
+    assert "[V4+ Styles]" in texto
+    linhas_style = [l for l in texto.split("\n") if l.startswith("Style:")]
+    assert len(linhas_style) == 1
