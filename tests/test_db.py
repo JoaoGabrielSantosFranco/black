@@ -75,3 +75,35 @@ def test_contador_de_upload_e_por_dia(con):
     db.registrar_upload(con, cid, "yt123", "2026-08-25")
     assert db.uploads_no_dia(con, "2026-08-25") == 1
     assert db.uploads_no_dia(con, "2026-08-26") == 0
+
+
+def test_listar_jobs_retorna_lista_vazia_se_nenhum(con):
+    jobs = db.listar_jobs(con)
+    assert jobs == []
+
+
+def test_listar_jobs_retorna_em_ordem_decrescente(con):
+    j1 = _job(con)
+    j2 = _job(con)
+    j3 = _job(con)
+    jobs = db.listar_jobs(con)
+    assert [j.id for j in jobs] == [j3, j2, j1]
+
+
+def test_listar_jobs_retorna_dataclass_job(con):
+    _job(con)
+    jobs = db.listar_jobs(con)
+    assert len(jobs) == 1
+    j = jobs[0]
+    assert isinstance(j, db.Job)
+    assert j.id == 1
+    assert j.video_id == "A"
+    assert j.titulo == "Ep 1"
+    assert j.perfil == "cortes_br"
+
+
+def test_listar_jobs_respeita_limite(con):
+    for _ in range(5):
+        _job(con)
+    assert len(db.listar_jobs(con, limite=3)) == 3
+    assert len(db.listar_jobs(con, limite=10)) == 5

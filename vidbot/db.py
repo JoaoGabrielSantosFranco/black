@@ -115,6 +115,14 @@ def proximo_job(con, estados: list[str]) -> Job | None:
     return _job(r) if r else None
 
 
+def listar_jobs(con, limite: int = 20) -> list[Job]:
+    """Jobs mais recentes primeiro, para a CLI e o bot."""
+    rs = con.execute(
+        "SELECT * FROM jobs ORDER BY id DESC LIMIT ?", (int(limite),)
+    ).fetchall()
+    return [_job(r) for r in rs]
+
+
 def transicionar_job(con, job_id: int, de: str, para: str, erro: str | None = None) -> bool:
     """True se aplicou. False se o job ja nao estava em `de` (outro processo mexeu)."""
     if not e.pode(e.TRANSICOES_JOB, de, para):

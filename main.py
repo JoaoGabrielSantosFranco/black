@@ -46,13 +46,13 @@ def cmd_ingest(args) -> int:
 def cmd_jobs(args) -> int:
     con = _con(args)
     try:
-        linhas = con.execute("SELECT * FROM jobs ORDER BY id DESC LIMIT 20").fetchall()
-        if not linhas:
+        jobs = db.listar_jobs(con)
+        if not jobs:
             print("nenhum job")
             return 0
-        for r in linhas:
-            titulo = r["titulo"] or r["video_id"]
-            print(f"#{r['id']:>4} {r['estado']:<20} {r['perfil']:<12} {titulo}")
+        for j in jobs:
+            titulo = j.titulo or j.video_id
+            print(f"#{j.id:>4} {j.estado:<20} {j.perfil:<12} {titulo}")
         return 0
     finally:
         con.close()
