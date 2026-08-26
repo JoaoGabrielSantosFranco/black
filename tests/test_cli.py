@@ -35,3 +35,18 @@ def test_jobs_lista_o_que_existe(tmp_path, capsys):
 def test_jobs_sem_nada_avisa(tmp_path, capsys):
     main.main(_argv(tmp_path, "jobs"))
     assert "nenhum job" in capsys.readouterr().out
+
+
+def test_bot_sem_token_avisa_e_nao_sobe(tmp_path, capsys, monkeypatch):
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    code = main.main(_argv(tmp_path, "bot"))
+    assert code == 1
+    assert "TELEGRAM_BOT_TOKEN" in capsys.readouterr().out
+
+
+def test_bot_sem_operadores_avisa_e_nao_sobe(tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:abc")
+    monkeypatch.delenv("TELEGRAM_ALLOWED_USER_IDS", raising=False)
+    code = main.main(_argv(tmp_path, "bot"))
+    assert code == 1
+    assert "TELEGRAM_ALLOWED_USER_IDS" in capsys.readouterr().out

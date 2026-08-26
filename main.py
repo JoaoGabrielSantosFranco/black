@@ -74,6 +74,27 @@ def cmd_run(args) -> int:
         con.close()
 
 
+def cmd_bot(args) -> int:
+    """Sobe o bot do Telegram (polling) para aprovar e publicar cortes."""
+    from vidbot import bot
+
+    cfg = config.carregar()
+    if not cfg.telegram_token:
+        print("TELEGRAM_BOT_TOKEN nao configurado no .env")
+        return 1
+    if not cfg.telegram_ids:
+        print("TELEGRAM_ALLOWED_USER_IDS nao configurado no .env — ninguem poderia usar o bot")
+        return 1
+    con = _con(args)
+    try:
+        app = bot.criar_app(cfg, con)
+        print("bot no ar — /cortes lista os pendentes de aprovacao")
+        app.run_polling()
+        return 0
+    finally:
+        con.close()
+
+
 def cmd_limpar(args) -> int:
     """Remove workdirs de jobs que ja terminaram."""
     import shutil
@@ -112,11 +133,12 @@ def main(argv=None) -> int:
     p_run.add_argument("--job", type=int, help="id; sem isso pega o proximo")
 
     sub.add_parser("limpar", help="apaga workdirs de jobs encerrados")
+    sub.add_parser("bot", help="sobe o bot do Telegram para aprovar/publicar cortes")
 
     args = parser.parse_args(argv)
     return {
         "doctor": cmd_doctor, "ingest": cmd_ingest, "jobs": cmd_jobs,
-        "run": cmd_run, "limpar": cmd_limpar,
+        "run": cmd_run, "limpar": cmd_limpar, "bot": cmd_bot,
     }[args.cmd](args)
 
 

@@ -6,6 +6,8 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 PROVEDORES = {"groq", "gemini", "ollama"}
 RAIZ = Path(__file__).resolve().parent.parent
 
@@ -40,6 +42,8 @@ def _ler_ids(bruto: str) -> list[int]:
 
 
 def carregar(env: dict | None = None) -> Config:
+    if env is None:
+        load_dotenv(RAIZ / ".env")
     e = dict(os.environ if env is None else env)
     provider = e.get("LLM_PROVIDER", "groq").strip().lower()
     if provider not in PROVEDORES:
@@ -63,7 +67,7 @@ def diagnosticar(cfg: Config) -> list[tuple[str, bool, str]]:
     return [
         ("chave do LLM", bool(chave) or cfg.llm_provider == "ollama", cfg.llm_provider),
         ("ffmpeg", ffmpeg is not None, ffmpeg or "nao encontrado — sudo apt install ffmpeg"),
-        ("token do Telegram", bool(cfg.telegram_token), "opcional ate a Tarefa 11"),
+        ("token do Telegram", bool(cfg.telegram_token), "necessario para `main.py bot`"),
         ("operadores autorizados", bool(cfg.telegram_ids), f"{len(cfg.telegram_ids)} id(s)"),
         ("disco livre", livre_gb >= 3, f"{livre_gb:.1f} GB (minimo 3)"),
     ]

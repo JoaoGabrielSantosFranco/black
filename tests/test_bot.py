@@ -1,6 +1,6 @@
 import pytest
 
-from vidbot import bot, config, db, estados as e
+from vidbot import bot, config, db, estados as e, perfis, youtube as yt
 
 
 @pytest.fixture
@@ -68,3 +68,56 @@ def test_decidir_duas_vezes_nao_reaplica(con):
     bot.decidir_corte(con, "aprovar", cid)
     with pytest.raises(bot.JaDecidido):
         bot.decidir_corte(con, "descartar", cid)
+
+
+def test_texto_do_corte_traz_id_titulo_e_janela():
+    class C:
+        id = 9
+        titulo = "Um corte"
+        inicio_s = 10.0
+        fim_s = 50.0
+        duracao_s = 40.0
+        nota = 85
+
+    texto = bot.montar_texto_corte(C())
+    assert "#9" in texto and "Um corte" in texto and "40" in texto
+
+
+class ServicoFalso:
+    def __init__(self, video_id="yt-abc"):
+        self.video_id = video_id
+
+    def inserir(self, corpo, caminho):
+        return self.video_id
+
+
+def _corte_aprovado(con):
+    jid = db.criar_job(con, "u", "A", "Ep", "@x", 600, "p")
+    cid = db.criar_corte(con, jid, 0.0, 40.0, "t", 80)
+    db.transicionar_corte(con, cid, e.AGUARDANDO_APROVACAO, e.APROVADO)
+    return db.obter_corte(con, cid)
+
+
+def test_publicar_ou_avisar_sem_servico_nao_publica(con):
+    corte = _corte_aprovado(con)
+    texto = bot.publicar_ou_avisar(con, corte, perfis.Perfil(nome="p"), {}, None)
+    assert "sem token" in texto
+    assert db.obter_corte(con, corte.id).estado == e.APROVADO
+
+
+def test_publicar_ou_avisar_publica_com_sucesso(con):
+    corte = _corte_aprovado(con)
+    texto = bot.publicar_ou_avisar(con, corte, perfis.Perfil(nome="p"), {"url_original": "u"},
+                                   ServicoFalso())
+    assert "yt-abc" in texto
+    assert db.obter_corte(con, corte.id).estado == e.PUBLICADO
+
+
+def test_publicar_ou_avisar_sem_quota_avisa_e_mantem_aprovado(con):
+    corte = _corte_aprovado(con)
+    for i in range(6):
+        db.registrar_upload(con, corte.id, f"x{i}", yt.hoje())
+    texto = bot.publicar_ou_avisar(con, corte, perfis.Perfil(nome="p"), {"url_original": "u"},
+                                   ServicoFalso())
+    assert "cota" in texto
+    assert db.obter_corte(con, corte.id).estado == e.APROVADO

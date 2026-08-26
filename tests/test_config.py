@@ -42,3 +42,17 @@ def test_diagnostico_reprova_sem_chave():
     cfg = config.carregar(_env(GROQ_API_KEY=""))
     linhas = dict((nome, ok) for nome, ok, _ in config.diagnosticar(cfg))
     assert linhas["chave do LLM"] is False
+
+
+def test_sem_env_explicito_le_o_dotenv_da_raiz(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "RAIZ", tmp_path)
+    (tmp_path / ".env").write_text("GROQ_API_KEY=do-arquivo\n", encoding="utf-8")
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    assert config.carregar().groq_api_key == "do-arquivo"
+
+
+def test_variavel_de_ambiente_ja_setada_vence_o_dotenv(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "RAIZ", tmp_path)
+    (tmp_path / ".env").write_text("GROQ_API_KEY=do-arquivo\n", encoding="utf-8")
+    monkeypatch.setenv("GROQ_API_KEY", "do-ambiente")
+    assert config.carregar().groq_api_key == "do-ambiente"

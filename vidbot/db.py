@@ -158,6 +158,15 @@ def cortes_do_job(con, job_id: int) -> list[Corte]:
     return [_corte(r) for r in rs]
 
 
+def listar_cortes_pendentes(con, limite: int = 20) -> list[Corte]:
+    """Cortes aguardando decisao humana, de qualquer job, mais recentes primeiro."""
+    rs = con.execute(
+        "SELECT * FROM cortes WHERE estado=? ORDER BY id DESC LIMIT ?",
+        (e.AGUARDANDO_APROVACAO, int(limite)),
+    ).fetchall()
+    return [_corte(r) for r in rs]
+
+
 def transicionar_corte(con, corte_id: int, de: str, para: str, erro: str | None = None) -> bool:
     if not e.pode(e.TRANSICOES_CORTE, de, para):
         raise TransicaoInvalida(f"corte: {de} -> {para}")

@@ -107,3 +107,26 @@ def test_listar_jobs_respeita_limite(con):
         _job(con)
     assert len(db.listar_jobs(con, limite=3)) == 3
     assert len(db.listar_jobs(con, limite=10)) == 5
+
+
+def test_listar_cortes_pendentes_ignora_outros_estados(con):
+    jid = _job(con)
+    aprovado = db.criar_corte(con, jid, 0.0, 30.0, "aprovado", 90)
+    db.transicionar_corte(con, aprovado, e.AGUARDANDO_APROVACAO, e.APROVADO)
+    pendente = db.criar_corte(con, jid, 40.0, 70.0, "pendente", 80)
+    assert [c.id for c in db.listar_cortes_pendentes(con)] == [pendente]
+
+
+def test_listar_cortes_pendentes_atravessa_jobs_mais_recente_primeiro(con):
+    j1 = _job(con)
+    j2 = _job(con)
+    c1 = db.criar_corte(con, j1, 0.0, 30.0, "um", 90)
+    c2 = db.criar_corte(con, j2, 0.0, 30.0, "dois", 90)
+    assert [c.id for c in db.listar_cortes_pendentes(con)] == [c2, c1]
+
+
+def test_listar_cortes_pendentes_respeita_limite(con):
+    jid = _job(con)
+    for i in range(5):
+        db.criar_corte(con, jid, i * 10.0, i * 10.0 + 5.0, f"c{i}", 80)
+    assert len(db.listar_cortes_pendentes(con, limite=3)) == 3
