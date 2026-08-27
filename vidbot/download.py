@@ -10,6 +10,10 @@ from yt_dlp.utils import download_range_func
 FORMATO = "bv*[height<=1080][vcodec^=avc1]+ba[ext=m4a]/b[height<=1080]/b"
 
 
+class DownloadVazio(RuntimeError):
+    """O yt-dlp terminou sem deixar arquivo algum no destino."""
+
+
 def opcoes_metadados() -> dict:
     return {"skip_download": True, "quiet": True, "no_warnings": True,
             "writesubtitles": False, "writeautomaticsub": False}
@@ -24,6 +28,9 @@ def opcoes_secao(inicio_s: float, fim_s: float, destino: Path,
         "no_warnings": True,
         "download_ranges": download_range_func(None, [(float(inicio_s), float(fim_s))]),
         "force_keyframes_at_cuts": True,
+        # Sem fixar o container, um merge de streams incompativeis vira .mkv
+        # e o caminho que devolvemos apontaria para um arquivo inexistente.
+        "merge_output_format": "mp4",
     }
     if progresso is not None:
         op["progress_hooks"] = [progresso]
@@ -80,4 +87,20 @@ def baixar_secao(url: str, inicio_s: float, fim_s: float, destino: Path,
             ydl.download([url])
 
     com_retentativa(_baixar)
-    return destino
+    return _arquivo_baixado(destino)
+
+
+def _arquivo_baixado(destino: Path) -> Path:
+    """Confere que o download deixou arquivo e devolve o que realmente saiu.
+
+    O yt-dlp pode remuxar para outro container ("merged into mkv") e gravar
+    com sufixo diferente do pedido. Devolver o caminho pedido sem conferir
+    empurraria o problema para o ffmpeg, com um erro que nao explica nada.
+    """
+    if destino.is_file():
+        return destino
+    irmaos = sorted(p for p in destino.parent.glob(f"{destino.stem}.*")
+                    if p.is_file() and not p.name.endswith(".part"))
+    if irmaos:
+        return irmaos[0]
+    raise DownloadVazio(f"o yt-dlp nao deixou arquivo em {destino}")

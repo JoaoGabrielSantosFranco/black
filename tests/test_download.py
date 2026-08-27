@@ -60,3 +60,40 @@ def test_nao_retenta_video_privado():
 
     with pytest.raises(RuntimeError):
         d.com_retentativa(privado, tentativas=3, espera=lambda _s: None)
+
+
+def test_secao_fixa_o_container_no_mp4():
+    """Sem isto o merge do yt-dlp pode gravar .mkv e o caminho devolvido
+    apontaria para um arquivo que nao existe."""
+    assert d.opcoes_secao(0, 10, Path("/tmp/x.mp4"))["merge_output_format"] == "mp4"
+
+
+class _YdlFalso:
+    """Escreve onde mandarem, imitando o yt-dlp de verdade."""
+
+    def __init__(self, escreve_em=None):
+        self.escreve_em = escreve_em
+
+    def download(self, urls):
+        if self.escreve_em is not None:
+            Path(self.escreve_em).write_bytes(b"video")
+
+
+def test_baixar_secao_devolve_o_arquivo_que_saiu(tmp_path):
+    destino = tmp_path / "c.mp4"
+    saida = d.baixar_secao("u", 0, 10, destino, ydl=_YdlFalso(destino))
+    assert saida == destino and saida.is_file()
+
+
+def test_baixar_secao_acha_o_arquivo_remuxado_para_outra_extensao(tmp_path):
+    """yt-dlp avisa 'merged into mkv' e grava com outro sufixo."""
+    destino = tmp_path / "c.mp4"
+    real = tmp_path / "c.mkv"
+    saida = d.baixar_secao("u", 0, 10, destino, ydl=_YdlFalso(real))
+    assert saida == real and saida.is_file()
+
+
+def test_baixar_secao_falha_alto_quando_nada_foi_escrito(tmp_path):
+    """Devolver um caminho fantasma so adiaria o erro para o ffmpeg."""
+    with pytest.raises(d.DownloadVazio):
+        d.baixar_secao("u", 0, 10, tmp_path / "c.mp4", ydl=_YdlFalso(None))
